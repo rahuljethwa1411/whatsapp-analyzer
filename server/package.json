@@ -1,0 +1,17 @@
+{
+  "name": "afterchat-server",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node index.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "groq-sdk": "^0.7.0",
+    "zod": "^3.23.8",
+    "dotenv": "^16.4.5"
+  }
+}

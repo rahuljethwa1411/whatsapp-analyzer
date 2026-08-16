@@ -1,0 +1,81 @@
+/**
+ * EraSection Component
+ * Chronological conversation eras with dates, dominant topics, and evidence receipts.
+ */
+
+import { FadeReveal } from '../afterchat/FadeReveal';
+import { Receipt } from './Receipt';
+import { StoryEra } from '../../types/intelligence';
+import { ChatMessage } from '../../types/chat';
+
+interface EraSectionProps {
+  eras: StoryEra[];
+  getMessagesByIds: (ids: string[]) => ChatMessage[];
+  isUnlocked: boolean;
+}
+
+export function EraSection({ eras, getMessagesByIds, isUnlocked }: EraSectionProps) {
+  if (!eras || eras.length === 0) return null;
+
+  const displayEras = isUnlocked ? eras : eras.slice(0, 2);
+
+  return (
+    <section id="sec-eras" className="report-eras-section">
+      <FadeReveal>
+        <p className="eyebrow">04 · STORY ERAS</p>
+        <h2>Every chat has eras.</h2>
+        <p className="lede">Identified through activity shifts, topic changes, and key events.</p>
+      </FadeReveal>
+
+      <div className="eras-list">
+        {displayEras.map((era, index) => (
+          <FadeReveal key={era.id}>
+            <div className="era-card">
+              <div className="era-header-row">
+                <span className="era-number">ERA {String(index + 1).padStart(2, '0')}</span>
+                <span className="era-dates">
+                  {formatDate(era.startAt)} → {formatDate(era.endAt)}
+                </span>
+              </div>
+              <h3 className="era-title">{era.title}</h3>
+              <p className="era-summary">{era.summary}</p>
+
+              {era.dominantTopics.length > 0 && (
+                <div className="era-topics">
+                  <b>DOMINANT TOPICS:</b> {era.dominantTopics.join(', ')}
+                </div>
+              )}
+
+              {era.evidenceMessageIds.length > 0 && (
+                <Receipt
+                  messageIds={era.evidenceMessageIds}
+                  getMessagesByIds={getMessagesByIds}
+                  label="Era Receipts"
+                  explanation={`Evidence supporting "${era.title}"`}
+                />
+              )}
+            </div>
+          </FadeReveal>
+        ))}
+
+        {!isUnlocked && eras.length > 2 && (
+          <div className="eras-locked-notice">
+            <p>+{eras.length - 2} further eras unlocked in full report.</p>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function formatDate(dStr: string): string {
+  if (!dStr) return '?';
+  try {
+    return new Date(dStr).toLocaleDateString('en-GB', {
+      month: 'short',
+      year: '2-digit',
+    });
+  } catch {
+    return dStr;
+  }
+}
