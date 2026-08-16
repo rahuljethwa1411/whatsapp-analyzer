@@ -7,6 +7,7 @@ import { AnalysisSequence } from '../components/afterchat/AnalysisSequence';
 import { WhatsAppExportGuide } from '../components/afterchat/WhatsAppExportGuide';
 import { useAnalysisSequence } from '../hooks/useAnalysisSequence';
 import { useChatAnalysis } from '../context/ChatAnalysisContext';
+import { extractChatFile } from '../lib/zipExtractor';
 
 const sampleTxtFixture = `12/08/24, 10:42 pm - Rahul: bro we're actually going Goa this time
 12/08/24, 10:43 pm - Aisha: 100%
@@ -49,15 +50,15 @@ export function UploadPage() {
     }
   }, []);
 
-  const handleFileChange = (selectedFile: File | null) => {
+  const handleFileChange = async (selectedFile: File | null) => {
     setFile(selectedFile);
     if (selectedFile) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = (e.target?.result as string) || '';
-        processRawText(text, selectedFile.name);
-      };
-      reader.readAsText(selectedFile);
+      try {
+        const { text, fileName } = await extractChatFile(selectedFile);
+        processRawText(text, fileName || selectedFile.name);
+      } catch (err: any) {
+        console.error('Failed to parse file archive:', err);
+      }
     }
   };
 
@@ -68,16 +69,16 @@ export function UploadPage() {
     analysis.beginAnalysis(chatCat, backstory);
   };
 
-  const handleStartAnalysis = () => {
+  const handleStartAnalysis = async () => {
     const chatCat = selected || 'Friend group';
     if (file && !calculatedAnalysis) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = (e.target?.result as string) || '';
-        processRawText(text, file.name);
+      try {
+        const { text, fileName } = await extractChatFile(file);
+        processRawText(text, fileName || file.name);
         analysis.beginAnalysis(chatCat, backstory);
-      };
-      reader.readAsText(file);
+      } catch (err: any) {
+        console.error('Failed to process upload file:', err);
+      }
     } else {
       if (!calculatedAnalysis) {
         processRawText(sampleTxtFixture, 'sample_whatsapp_chat.txt');
@@ -151,7 +152,7 @@ export function UploadPage() {
             <p className="eyebrow">STEP 02 · THE ARCHIVE</p>
             <h1>Drop your chat here.</h1>
             <p className="lede">
-              Export your WhatsApp conversation without media and upload the .txt file.
+              Export your WhatsApp conversation and upload the .txt or .zip file archive.
             </p>
             <div className="upload-archive-layout">
               <div>
@@ -176,7 +177,7 @@ export function UploadPage() {
                 >
                   <input
                     type="file"
-                    accept=".txt"
+                    accept=".txt,.zip,application/zip,application/x-zip-compressed"
                     onChange={(event) => handleFileChange(event.target.files?.[0] || null)}
                   />
                   {file || calculatedAnalysis ? (
@@ -192,9 +193,9 @@ export function UploadPage() {
                   ) : (
                     <>
                       <b>
-                        Choose a .txt file <span>↓</span>
+                        Choose a .txt or .zip file <span>↓</span>
                       </b>
-                      <p>or drag & drop your exported chat here</p>
+                      <p>or drag & drop your WhatsApp export (.txt or .zip) here</p>
                     </>
                   )}
                 </label>

@@ -2,7 +2,7 @@ const steps = [
   'Open the WhatsApp chat you want to explore',
   'Tap the chat name, then choose Export chat',
   'Choose Without media',
-  'Save or share the .txt file here',
+  'Save or share the .txt or .zip file directly here',
 ];
 
 export function WhatsAppExportGuide() {

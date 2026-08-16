@@ -54,7 +54,7 @@ const faqs = [
   },
   {
     q: 'How do I export my WhatsApp chat without media?',
-    a: 'Open WhatsApp, go to the group or contact chat settings, select "Export Chat", and choose "Without Media". You will receive a simple .txt file.',
+    a: 'Open WhatsApp, go to the group or contact chat settings, select "Export Chat", and choose "Without Media" (or With Media). You can upload the .txt or .zip file directly.',
   },
   {
     q: 'Does AfterChat work with large chats?',
