@@ -1,6 +1,6 @@
 /**
  * Pattern Detection Prompt — Gen-Z Documentary Behavioral Analyst
- * Used for: finding recurring behaviors, phrases, topics, and failed plans.
+ * Updated to use CompactChatMemory instead of raw chunkInsights.
  */
 
 export function buildPatternDetectionSystemPrompt() {
@@ -15,29 +15,48 @@ ANALYST MINDSET:
 - Look for late-night habits: "Conversations that start with 'u up?' at 1:30 AM and end at 4:00 AM."
 
 RULES:
-1. Patterns must repeat at least twice to qualify.
-2. frequency is the estimated number of occurrences.
-3. importance reflects how defining the pattern is for the chat's dynamic (0.0 - 1.0).
-4. Use only real message IDs from the input.
-5. Return JSON only.
+1. STRICT UNBIASED PATTERN DETECTION: Identify ONLY patterns that are explicitly grounded in the memory data. Do NOT default to trip planning or generic vacation tropes unless explicitly present.
+2. Patterns must repeat at least twice to qualify.
+3. frequency is the estimated number of occurrences.
+4. importance reflects how defining the pattern is for the chat's dynamic (0.0 - 1.0).
+5. Use only real message IDs from the input.
+6. Return JSON only.
 
 GREAT PATTERN EXAMPLES:
-- "The Infinite Trip Planning Paradox (Proposed 9 times, executed 0 times)"
-- "The 2 AM Existential Crisis Loop"
+- "The 2 AM Late-Night Text Loop"
+- "The Unprompted Link/Meme Drop That Derails Discussion"
 - "The Single-Word Acknowledgment Trap ('k', 'cool', 'thumbs up')"
-- "The Unprompted Meme Drop That Derails All Serious Discussion"`;
+- "The Match Day Debrief Ritual"`;
 }
 
-export function buildPatternDetectionUserPrompt(memory, chunkInsights) {
-  const allPhrases = [...new Set(chunkInsights.flatMap(ci => ci.recurringPhrases || []))];
-  const allTopics = [...new Set(chunkInsights.flatMap(ci => ci.topics || []))];
+/**
+ * @param {Object} compactMemory — CompactChatMemory
+ */
+export function buildPatternDetectionUserPrompt(compactMemory) {
+  const allTopics = compactMemory.globalTopics || [];
+  const allThemes = compactMemory.recurringThemes || [];
+  const patterns = compactMemory.globalPatterns || [];
+  const allEvidenceIds = patterns.flatMap(p => p.messageIds || []).slice(0, 40);
 
-  return `Recurring phrases found: ${allPhrases.slice(0, 20).join(', ')}
+  return `Recurring themes: ${allThemes.slice(0, 20).join(', ')}
 
 All topics across conversation: ${allTopics.slice(0, 30).join(', ')}
 
-Chat memory summary:
-${JSON.stringify(memory.periods.map(p => ({ dateRange: p.dateRange, topics: p.topics.slice(0, 5) })), null, 2)}
+Observed behavioral patterns from extraction:
+${JSON.stringify(patterns.slice(0, 15), null, 2)}
+
+Chat memory periods (topic distribution over time):
+${JSON.stringify(
+    (compactMemory.periods || []).map(p => ({
+      dateRange: p.dateRange,
+      topics: p.topics.slice(0, 5),
+    })),
+    null,
+    2
+  )}
+
+Available evidence message IDs (only use these):
+${allEvidenceIds.join(', ')}
 
 Identify 3-6 meaningful behavioral patterns. Return JSON:
 {

@@ -16,23 +16,26 @@ export function useAnalysisSequence() {
   const [isReady, setIsReady] = useState(false);
   const hasStarted = useRef(false);
 
-  const { runAnalysis, status, currentStage, error } = useIntelligence();
+  const { runAnalysis, status, currentStage, progress, error } = useIntelligence();
   const { analysis, messages } = useChatAnalysis();
 
   const beginAnalysis = useCallback(async (chatType?: string, backstory?: string) => {
-    if (hasStarted.current) return;
-    hasStarted.current = true;
     setIsAnalysing(true);
+    setIsReady(false);
+    hasStarted.current = true;
 
     if (!analysis || !messages) {
-      // Fallback: no data yet — just navigate (will show mock data)
       setTimeout(() => {
         setIsReady(true);
       }, 1000);
       return;
     }
 
-    await runAnalysis(analysis, messages, chatType, backstory);
+    try {
+      await runAnalysis(analysis, messages, chatType, backstory);
+    } finally {
+      hasStarted.current = false;
+    }
 
     setIsReady(true);
 
@@ -47,6 +50,7 @@ export function useAnalysisSequence() {
     isReady,
     beginAnalysis,
     currentStage,
+    progress,
     aiStatus: status,
     aiError: error,
   };

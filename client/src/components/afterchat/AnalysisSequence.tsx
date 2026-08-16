@@ -22,11 +22,13 @@ export function AnalysisSequence({
   aiStatus,
   currentStage,
   aiError,
+  progress,
 }: {
   ready: boolean;
-  aiStatus?: 'idle' | 'loading' | 'done' | 'error';
+  aiStatus?: 'idle' | 'loading' | 'done' | 'error' | 'partial';
   currentStage?: string;
   aiError?: string | null;
+  progress?: number;
 }) {
   const { analysis } = useChatAnalysis();
 
@@ -45,6 +47,8 @@ export function AnalysisSequence({
 
   const isAIRunning = aiStatus === 'loading';
   const hasError = aiStatus === 'error';
+  const isPartial = aiStatus === 'partial';
+  const progressPct = progress ?? 0;
 
   return (
     <main className="analysis">
@@ -60,6 +64,21 @@ export function AnalysisSequence({
             <p className="lede">Your AfterChat is ready.</p>
             <a className="button" href="/report">
               Enter the story <span>→</span>
+            </a>
+          </motion.div>
+        ) : isPartial ? (
+          <motion.div
+            key="partial"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <p className="eyebrow">PARTIAL ANALYSIS</p>
+            <h1>Almost there.</h1>
+            <p className="lede" style={{ color: 'var(--color-warning, #f5a623)' }}>
+              {aiError ?? 'Analysis partially completed. Your report will be generated with available data.'}
+            </p>
+            <a className="button" href="/report">
+              View report <span>→</span>
             </a>
           </motion.div>
         ) : hasError ? (
@@ -124,17 +143,40 @@ export function AnalysisSequence({
                   transition={{ delay: 1.8 }}
                 >
                   <div className="ai-stage-dot" />
-                  <AnimatePresence mode="wait">
-                    <motion.span
-                      key={currentStage}
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -4 }}
-                      transition={{ duration: 0.3 }}
-                    >
-                      {currentStage}
-                    </motion.span>
-                  </AnimatePresence>
+                  <div style={{ flex: 1 }}>
+                    <AnimatePresence mode="wait">
+                      <motion.span
+                        key={currentStage}
+                        initial={{ opacity: 0, y: 4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -4 }}
+                        transition={{ duration: 0.3 }}
+                      >
+                        {currentStage}
+                      </motion.span>
+                    </AnimatePresence>
+                    {progressPct > 0 && (
+                      <motion.div
+                        style={{
+                          marginTop: 8,
+                          height: 3,
+                          borderRadius: 2,
+                          background: 'rgba(255,255,255,0.15)',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <motion.div
+                          style={{
+                            height: '100%',
+                            background: 'var(--color-accent, #a855f7)',
+                            borderRadius: 2,
+                          }}
+                          animate={{ width: `${progressPct}%` }}
+                          transition={{ duration: 0.5, ease: 'easeOut' }}
+                        />
+                      </motion.div>
+                    )}
+                  </div>
                 </motion.div>
               )}
             </div>

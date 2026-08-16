@@ -40,46 +40,94 @@ export const AnalyzeRequestSchema = z.object({
   })),
 });
 
-// ─── Chunk Extraction ────────────────────────────────────────────────────────
+// ─── Compact Chunk Extraction ─────────────────────────────────────────────────
+//
+// Replaces the old ChunkInsightSchema.
+// Designed for the SMALL extraction model — compact, structured, no prose.
+// Evidence IDs are preserved for every item so they survive into synthesis.
 
-export const ChunkInsightSchema = z.object({
-  chunkId: z.string(),
-  topics: z.array(z.string()),
+export const CompactChunkExtractionSchema = z.object({
+  period: z.object({
+    start: z.string(),
+    end: z.string(),
+  }),
+  topics: z.array(z.string()).max(8),
   events: z.array(z.object({
-    title: z.string(),
-    description: z.string(),
-    importance: z.number().min(0).max(1),
+    description: z.string().max(200),
     messageIds: z.array(z.string()),
-  })),
-  moments: z.array(z.object({
-    type: z.enum(['funny', 'dramatic', 'absurd', 'wholesome', 'conflict', 'plan', 'lore']),
-    title: z.string(),
-    description: z.string(),
-    importance: z.number().min(0).max(1),
+  })).max(6),
+  notableMoments: z.array(z.object({
+    description: z.string().max(200),
     messageIds: z.array(z.string()),
-  })),
-  recurringPhrases: z.array(z.string()),
-  toneSignals: z.array(z.string()),
-  activityNote: z.string().optional(),
+  })).max(6),
+  patterns: z.array(z.object({
+    description: z.string().max(200),
+    messageIds: z.array(z.string()),
+  })).max(4),
+  relationshipChanges: z.array(z.object({
+    description: z.string().max(200),
+    messageIds: z.array(z.string()),
+  })).max(3),
+  recurringThemes: z.array(z.string()).max(5),
 });
 
-// ─── Chat Memory ─────────────────────────────────────────────────────────────
+// Backward-compat alias for any code still referencing ChunkInsightSchema
+// The new schema is a superset replacement; downstream consumers get adapted in memory.js
+export const ChunkInsightSchema = CompactChunkExtractionSchema;
 
-export const ChatMemorySchema = z.object({
+// ─── Compact Chat Memory ──────────────────────────────────────────────────────
+//
+// The merged, deduplicated memory passed to ALL synthesis model calls.
+// Significantly smaller than raw chat — typically 5k–15k tokens.
+
+export const CompactChatMemorySchema = z.object({
+  timelineStart: z.string(),
+  timelineEnd: z.string(),
+  totalMessages: z.number(),
+  participants: z.array(z.object({
+    name: z.string(),
+    messageCount: z.number(),
+    percentage: z.number(),
+  })),
   periods: z.array(z.object({
     dateRange: z.string(),
+    messageCount: z.number(),
     topics: z.array(z.string()),
     events: z.array(z.object({
-      title: z.string(),
+      description: z.string(),
       messageIds: z.array(z.string()),
     })),
-    toneSignals: z.array(z.string()),
-    messageCount: z.number(),
+    notableMoments: z.array(z.object({
+      description: z.string(),
+      messageIds: z.array(z.string()),
+    })),
+    recurringThemes: z.array(z.string()),
   })),
   globalTopics: z.array(z.string()),
-  recurringPhrases: z.array(z.string()),
-  allEventTitles: z.array(z.string()),
+  globalEvents: z.array(z.object({
+    description: z.string(),
+    messageIds: z.array(z.string()),
+  })),
+  globalMoments: z.array(z.object({
+    description: z.string(),
+    messageIds: z.array(z.string()),
+  })),
+  globalPatterns: z.array(z.object({
+    description: z.string(),
+    messageIds: z.array(z.string()),
+  })),
+  recurringThemes: z.array(z.string()),
+  // Extraction quality metadata
+  _meta: z.object({
+    chunksTotal: z.number(),
+    chunksSucceeded: z.number(),
+    chunksFailed: z.number(),
+    extractionModel: z.string(),
+  }).optional(),
 });
+
+// Keep old ChatMemorySchema exported for any Phase 4 references
+export const ChatMemorySchema = CompactChatMemorySchema;
 
 // ─── Global Discovery ────────────────────────────────────────────────────────
 
@@ -168,6 +216,7 @@ export const PatternInsightSchema = z.object({
 });
 
 // ─── Final AfterchatIntelligence ─────────────────────────────────────────────
+// UNCHANGED — Phase 4 depends on this schema exactly.
 
 export const AfterchatIntelligenceSchema = z.object({
   overview: z.object({
@@ -225,6 +274,7 @@ export const AfterchatIntelligenceSchema = z.object({
 });
 
 // ─── Phase 4 Story Schemas ──────────────────────────────────────────────────
+// UNCHANGED — do not modify these.
 
 export const StoryChapterSchema = z.object({
   id: z.string(),
@@ -281,4 +331,3 @@ export const GenerateStoryRequestSchema = z.object({
     topWords: z.array(z.string()),
   }),
 });
-

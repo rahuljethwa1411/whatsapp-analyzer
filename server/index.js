@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { AnalyzeRequestSchema } from './lib/ai/schemas/index.js';
 import { runIntelligencePipeline } from './lib/intelligence.js';
-import { createChunks } from './lib/chunker.js';
+import { DailyLimitError, InvalidApiKeyError, getTokenTelemetry } from './lib/ai/groq.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -18,8 +18,15 @@ app.get('/api/health', (req, res) => {
     service: 'Afterchat Server API',
     phase: 3,
     groqConfigured: !!process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'your_groq_api_key_here',
+    extractionModel: process.env.GROQ_EXTRACTION_MODEL || process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
+    synthesisModel: process.env.GROQ_SYNTHESIS_MODEL || process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
     timestamp: new Date().toISOString(),
   });
+});
+
+// ─── Internal Telemetry (do NOT expose to client) ──────────────────────────
+app.get('/api/telemetry', (req, res) => {
+  res.json(getTokenTelemetry());
 });
 
 // ─── Phase 3 AI Analysis ──────────────────────────────────────────────────
@@ -44,18 +51,22 @@ app.post('/api/analyze', async (req, res) => {
     });
   }
 
-  // 3. If client didn't chunk, do it server-side
-  let { chunks } = request;
+  // 3. Validate chunks present
+  const { chunks } = request;
   if (!chunks || chunks.length === 0) {
-    const allMessages = [];
     return res.status(400).json({ success: false, error: 'No message chunks provided.' });
   }
 
-  console.log(`[Analyze] ${request.metadata.totalMessages} messages · ${chunks.length} chunks · participants: ${request.metadata.participants.join(', ')}`);
+  const totalMessages = request.metadata.totalMessages;
+  const participants = request.metadata.participants.join(', ');
+  console.log(
+    `[Analyze] ${totalMessages.toLocaleString()} messages · ${chunks.length} chunks · ` +
+    `participants: ${participants}`
+  );
 
   try {
-    const intelligence = await runIntelligencePipeline(request, (stage) => {
-      console.log(`[Pipeline] ${stage}`);
+    const intelligence = await runIntelligencePipeline(request, ({ stage, percent }) => {
+      console.log(`[Pipeline] ${stage}${percent !== undefined ? ` (${percent}%)` : ''}`);
     });
 
     return res.json({
@@ -65,7 +76,33 @@ app.post('/api/analyze', async (req, res) => {
   } catch (err) {
     console.error('[Analyze] Pipeline error:', err.message);
 
-    // Don't expose internal errors to client
+    // Invalid API Key
+    if (err instanceof InvalidApiKeyError || err?.code === 'INVALID_API_KEY') {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid GROQ_API_KEY in server/.env. Please verify your API key or generate a new key at https://console.groq.com/keys',
+        code: 'INVALID_API_KEY',
+      });
+    }
+
+    // Daily limit — tell user specifically
+    if (err instanceof DailyLimitError || err?.code === 'DAILY_LIMIT_EXCEEDED') {
+      return res.status(429).json({
+        success: false,
+        error: "We've hit the daily AI analysis limit. Please try again tomorrow, or upgrade your Groq plan for higher limits.",
+        code: 'DAILY_LIMIT_EXCEEDED',
+      });
+    }
+
+    // Incomplete analysis (too many chunks failed)
+    if (err.message?.includes('Too many extraction chunks failed')) {
+      return res.status(503).json({
+        success: false,
+        error: 'Analysis could not complete — too many conversation segments failed to process. This may be a temporary API issue. Please try again.',
+        code: 'ANALYSIS_INCOMPLETE',
+      });
+    }
+
     const isConfigError = err.message?.includes('GROQ_API_KEY');
     return res.status(500).json({
       success: false,
@@ -106,6 +143,7 @@ app.post('/api/story', async (req, res) => {
       systemPrompt: buildStorySystemPrompt(),
       userPrompt: buildStoryUserPrompt(intelligence, summaryStats, metadata),
       schema: StorySchema,
+      tier: 'synthesis', // Always use the strong model for story generation
     });
 
     return res.json({
@@ -114,6 +152,15 @@ app.post('/api/story', async (req, res) => {
     });
   } catch (err) {
     console.error('[Story] Generation error:', err.message);
+
+    if (err instanceof DailyLimitError) {
+      return res.status(429).json({
+        success: false,
+        error: "We've hit the daily AI limit. Please try again tomorrow.",
+        code: 'DAILY_LIMIT_EXCEEDED',
+      });
+    }
+
     return res.status(500).json({
       success: false,
       error: 'Story generation failed. Please try again.',
@@ -123,7 +170,12 @@ app.post('/api/story', async (req, res) => {
 
 app.listen(PORT, () => {
   const groqOk = !!process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'your_groq_api_key_here';
+  const extractionModel = process.env.GROQ_EXTRACTION_MODEL || process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
+  const synthesisModel = process.env.GROQ_SYNTHESIS_MODEL || process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
   console.log(`⚡ Afterchat API Server running on port ${PORT}`);
   console.log(`   Phase 3/4: ${groqOk ? '✅ Groq configured' : '⚠️  Set GROQ_API_KEY in server/.env'}`);
+  if (groqOk) {
+    console.log(`   Extraction model: ${extractionModel}`);
+    console.log(`   Synthesis model:  ${synthesisModel}`);
+  }
 });
-

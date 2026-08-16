@@ -1,6 +1,6 @@
 /**
  * Plot Twist Detection Prompt — Gen-Z Documentary Drama Editor
- * Used for: detecting major behavioral/activity changes in the conversation.
+ * Updated to use CompactChatMemory instead of raw allMessages.
  */
 
 export function buildPlotTwistsSystemPrompt() {
@@ -28,17 +28,37 @@ GREAT PLOT TWIST EXAMPLES:
 - "The Late-Night Vibe Shift (Logistics turned into emotional confessions at 1:45 AM)"`;
 }
 
-export function buildPlotTwistsUserPrompt(memory, globalDiscovery, allMessages) {
-  const changeMessages = allMessages.slice(0, 20).map(m => `[${m.id}] ${m.sender}: ${m.text}`);
+/**
+ * @param {Object} compactMemory  — CompactChatMemory
+ * @param {Object} globalDiscovery — GlobalDiscovery result
+ */
+export function buildPlotTwistsUserPrompt(compactMemory, globalDiscovery) {
+  // Use relationship changes from patterns as evidence
+  const relationshipChanges = compactMemory.globalPatterns || [];
+  const allEvidenceIds = [
+    ...relationshipChanges.flatMap(r => r.messageIds || []),
+    ...(compactMemory.globalEvents || []).flatMap(e => e.messageIds || []),
+  ].slice(0, 40);
 
   return `Major changes identified:
 ${JSON.stringify(globalDiscovery.majorChanges || [], null, 2)}
 
-Chat memory periods:
-${JSON.stringify(memory.periods.map(p => ({ dateRange: p.dateRange, messageCount: p.messageCount, topics: p.topics, tone: p.toneSignals })), null, 2)}
+Chat memory periods (message counts and topics):
+${JSON.stringify(
+    (compactMemory.periods || []).map(p => ({
+      dateRange: p.dateRange,
+      messageCount: p.messageCount,
+      topics: p.topics,
+    })),
+    null,
+    2
+  )}
 
-Sample messages for evidence:
-${changeMessages.join('\n')}
+Observable relationship/tone changes:
+${JSON.stringify(relationshipChanges.slice(0, 10), null, 2)}
+
+Available evidence message IDs (only use these):
+${allEvidenceIds.join(', ')}
 
 Identify 1-4 plot twists. Return JSON:
 {

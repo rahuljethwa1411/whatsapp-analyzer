@@ -23,7 +23,7 @@ RULES:
 7. Return JSON only.
 
 GREAT ERA TITLE EXAMPLES:
-- "The Era Where Everything Was About Goa (May - Jun)"
+- "The Era of Late-Night Debriefs (May - Jun)"
 - "The Great 2 AM Philosophy Renaissance"
 - "The Ghosting & Radio Silence Incident"
 - "The Unprecedented Meme Dump Period"
@@ -36,15 +36,37 @@ BAD ERA TITLE EXAMPLES:
 - "Period of High Volume Messaging"`;
 }
 
-export function buildEraDetectionUserPrompt(memory, metadata) {
+export function buildEraDetectionUserPrompt(compactMemory, metadata) {
+  // Collect all evidence IDs from the memory for the model to reference
+  const allEvidenceIds = [
+    ...(compactMemory.globalEvents || []).flatMap(e => e.messageIds || []),
+    ...(compactMemory.globalMoments || []).flatMap(m => m.messageIds || []),
+  ].slice(0, 50);
+
   return `Chat overview:
 Participants: ${metadata.participants.join(', ')}
 Category: ${metadata.chatType || 'Friend group'}
 ${metadata.backstory ? `User Context/Backstory: "${metadata.backstory}"\n` : ''}Duration: ${metadata.durationDays} days
-Total messages: ${metadata.totalMessages}
+Total messages: ${compactMemory.totalMessages || metadata.totalMessages}
+Timeline: ${compactMemory.timelineStart} → ${compactMemory.timelineEnd}
 
-Chat memory (compact timeline):
-${JSON.stringify(memory, null, 2)}
+Global Topics: ${(compactMemory.globalTopics || []).join(', ')}
+Recurring Themes: ${(compactMemory.recurringThemes || []).join(', ')}
+
+Timeline periods (compact):
+${JSON.stringify(
+    (compactMemory.periods || []).map(p => ({
+      dateRange: p.dateRange,
+      messageCount: p.messageCount,
+      topics: p.topics.slice(0, 5),
+      themes: p.recurringThemes,
+    })),
+    null,
+    2
+  )}
+
+Available evidence message IDs (only use these):
+${allEvidenceIds.join(', ')}
 
 Identify 2-6 meaningful, dramatic eras. Return JSON:
 {

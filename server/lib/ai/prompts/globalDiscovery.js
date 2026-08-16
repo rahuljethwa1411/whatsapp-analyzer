@@ -1,7 +1,6 @@
 /**
  * Global Discovery Prompt — Gen-Z Documentary Producer Voice
- * Used for: cross-chunk theme and pattern discovery over the compact ChatMemory.
- * This is the "zoom out" pass — finding the macro story arcs.
+ * Updated to accept CompactChatMemory instead of the old ChatMemory shape.
  */
 
 export function buildGlobalDiscoverySystemPrompt() {
@@ -17,26 +16,44 @@ PRODUCER MINDSET:
 - Notice patterns so specific they'll make the users say "WAIT HOW DO YOU KNOW THAT."
 
 RULES:
-1. Work from the memory only — do not invent details.
-2. Describe changes factually: "Something shifted around X" not "X caused Y to happen."
-3. Recurring jokes should be grounded in actual phrases or references from the memory.
-4. Potential story arcs should be HYPER-SPECIFIC to this chat, not generic arcs like "friends growing closer."
-5. overallTone should be a vivid, specific description — not just "friendly" but something like "chaotic energy with bursts of emotional honesty at 2 AM."
-6. Return JSON only.`;
+1. STRICT UNBIASED ANALYSIS: Base all discovery strictly on the provided memory input. Do NOT assume, invent, or default to any unmentioned topics, trips, or places. Extract whatever subjects (football, work, gaming, daily chat, etc.) are actually in the memory.
+2. Work from the memory only — do not invent details.
+3. Describe changes factually: "Something shifted around X" not "X caused Y to happen."
+4. Recurring jokes should be grounded in actual phrases or references from the memory.
+5. Potential story arcs should be HYPER-SPECIFIC to this exact chat's real topics.
+6. overallTone should be a vivid, specific description based purely on real chat behavior.
+7. Return JSON only.`;
 }
 
-export function buildGlobalDiscoveryUserPrompt(memory, metadata, summaryStats) {
+export function buildGlobalDiscoveryUserPrompt(compactMemory, metadata, summaryStats) {
   return `Chat category / Relationship: ${metadata.chatType || 'General'}
 ${metadata.backstory ? `User-supplied backstory/lore context: "${metadata.backstory}"\n` : ''}Participants: ${metadata.participants.join(', ')}
-Duration: ${metadata.durationDays} days
+Duration: ${metadata.durationDays} days | Total messages: ${metadata.totalMessages.toLocaleString()}
 Peak hour: ${summaryStats.peakHour || 'unknown'}
 Peak day: ${summaryStats.peakDay || 'unknown'}
 Most used emoji: ${summaryStats.mostUsedEmoji || 'none'}
 Longest silence: ${summaryStats.longestSilenceDays || 0} days
 Top words: ${summaryStats.topWords.slice(0, 10).join(', ')}
 
-Chat Memory:
-${JSON.stringify(memory, null, 2)}
+Global Topics: ${compactMemory.globalTopics.slice(0, 20).join(', ')}
+Recurring Themes: ${compactMemory.recurringThemes.slice(0, 15).join(', ')}
+
+Timeline Periods (compact):
+${JSON.stringify(
+    (compactMemory.periods || []).map(p => ({
+      dateRange: p.dateRange,
+      messageCount: p.messageCount,
+      topics: p.topics.slice(0, 4),
+    })),
+    null,
+    2
+  )}
+
+Top Events:
+${JSON.stringify(compactMemory.globalEvents.slice(0, 15), null, 2)}
+
+Top Moments:
+${JSON.stringify(compactMemory.globalMoments.slice(0, 10), null, 2)}
 
 Return JSON:
 {

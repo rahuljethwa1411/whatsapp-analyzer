@@ -34,12 +34,12 @@ export function ReportShell() {
   const { intelligence, getMessagesByIds } = useIntelligence();
   const { story, generateStory, accessMode, setAccessMode } = useStory();
 
-  // Generate story if intelligence is present but story is not yet generated
+  // Generate/update story whenever intelligence or analysis is loaded
   useEffect(() => {
-    if (intelligence && analysis && !story) {
+    if (analysis) {
       generateStory(intelligence, analysis);
     }
-  }, [intelligence, analysis, story, generateStory]);
+  }, [intelligence, analysis, generateStory]);
 
   useEffect(() => {
     const handleScroll = () => {

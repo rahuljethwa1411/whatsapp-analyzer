@@ -88,6 +88,8 @@ export function ChatAnalysisProvider({ children }: { children: ReactNode }) {
       try {
         localStorage.setItem('afterchat_analysis', JSON.stringify(calculatedAnalysis));
         localStorage.setItem('afterchat_filename', fileName);
+        localStorage.removeItem('afterchat_intelligence');
+        localStorage.removeItem('afterchat_story');
       } catch { /* storage full */ }
 
       return { success: true, error: null };
@@ -108,6 +110,8 @@ export function ChatAnalysisProvider({ children }: { children: ReactNode }) {
     try {
       localStorage.removeItem('afterchat_analysis');
       localStorage.removeItem('afterchat_filename');
+      localStorage.removeItem('afterchat_intelligence');
+      localStorage.removeItem('afterchat_story');
     } catch { /* ignore */ }
   };
 

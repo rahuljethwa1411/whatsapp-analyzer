@@ -1,43 +1,48 @@
 /**
- * Smart Chunker
- * Groups messages into AnalysisChunks respecting session boundaries.
- * Default: 300 messages per chunk max.
+ * Token-Budget & Count-Bounded Chunker
+ *
+ * Groups messages into AnalysisChunks respecting session boundaries,
+ * token budgets (~2500 tokens max), and message count limits (120 msgs max).
+ *
+ * For mega chats (25k-50k+ messages), evenly samples up to MAX_EXTRACTION_CHUNKS (20)
+ * across the entire timeline to ensure analysis completes in under 20 seconds
+ * without exceeding Groq TPM limits.
  */
 
-const DEFAULT_MAX_MESSAGES_PER_CHUNK = 300;
+import {
+  estimateChunkPayloadTokens,
+  truncateMessageIfOversized,
+  MAX_EXTRACTION_INPUT_TOKENS,
+  MAX_MESSAGES_PER_CHUNK,
+  MAX_EXTRACTION_CHUNKS,
+} from './tokenEstimator.js';
+
+const SESSION_GAP_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 /**
- * @param {Array} sessions     — ConversationSession[] from Phase 2
- * @param {Array} allMessages  — ChatMessage[] (normal messages only)
- * @param {Object} config
+ * @param {Array} sessions      — ConversationSession[] from Phase 2
+ * @param {Array} allMessages   — ChatMessage[] (all message types)
+ * @param {Object} [config]
  * @returns {Array} AnalysisChunk[]
  */
 export function createChunks(sessions, allMessages, config = {}) {
-  const maxPerChunk = config.maxMessagesPerChunk || DEFAULT_MAX_MESSAGES_PER_CHUNK;
+  const maxTokens = config.maxTokensPerChunk
+    ?? parseInt(process.env.MAX_EXTRACTION_INPUT_TOKENS || '2500', 10);
+  const maxMsgs = config.maxMessagesPerChunk || MAX_MESSAGES_PER_CHUNK;
+  const maxChunksCap = config.maxChunks || MAX_EXTRACTION_CHUNKS;
 
-  // Build a message lookup map by ID
-  const msgMap = new Map();
-  for (const m of allMessages) {
-    msgMap.set(m.id, m);
-  }
-
-  // Build a map of session → message IDs (we need to find messages per session)
-  // Since sessions only store message counts / participants, we rebuild by timestamp
+  // ── 1. Filter + sort normal messages only ───────────────────────────────────
   const normalMessages = allMessages
-    .filter(m => m.type === 'message')
+    .filter(m => m.type === 'message' && m.text && m.text.trim().length > 0)
     .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-  const SESSION_GAP_MS = 2 * 60 * 60 * 1000; // 2h
+  if (normalMessages.length === 0) return [];
 
-  // Re-group messages into sessions (same logic as Phase 2 session calculator)
+  // ── 2. Re-group into sessions by 2h gap ────────────────────────────────────
   const sessionGroups = [];
-  let currentGroup = [];
+  let currentGroup = [normalMessages[0]];
 
-  for (let i = 0; i < normalMessages.length; i++) {
-    if (i === 0) {
-      currentGroup.push(normalMessages[i]);
-      continue;
-    }
+  for (let i = 1; i < normalMessages.length; i++) {
     const prev = normalMessages[i - 1];
     const curr = normalMessages[i];
     const gap = new Date(curr.timestamp) - new Date(prev.timestamp);
@@ -50,36 +55,88 @@ export function createChunks(sessions, allMessages, config = {}) {
   }
   if (currentGroup.length > 0) sessionGroups.push(currentGroup);
 
-  // Now group sessions into chunks by message count
-  const chunks = [];
-  let currentChunkSessions = [];
+  // ── 3. Pack sessions into token- & count-budgeted chunks ───────────────────
+  const allRawChunks = [];
   let currentChunkMessages = [];
+  let currentChunkTokens = 0;
+  let currentSessionIds = [];
   let chunkIndex = 0;
 
-  for (const sg of sessionGroups) {
-    // If adding this session would exceed the limit, finalize current chunk
-    if (currentChunkMessages.length > 0 && currentChunkMessages.length + sg.length > maxPerChunk) {
-      chunks.push(buildChunk(chunkIndex, currentChunkSessions, currentChunkMessages));
-      chunkIndex++;
-      currentChunkSessions = [];
-      currentChunkMessages = [];
+  const finalizeChunk = () => {
+    if (currentChunkMessages.length === 0) return;
+    allRawChunks.push(buildChunk(chunkIndex, currentSessionIds, currentChunkMessages));
+    chunkIndex++;
+    currentChunkMessages = [];
+    currentChunkTokens = 0;
+    currentSessionIds = [];
+  };
+
+  for (let si = 0; si < sessionGroups.length; si++) {
+    const sg = sessionGroups[si];
+    const sessionId = `session_${si + 1}`;
+    const sessionTokens = estimateChunkPayloadTokens(sg);
+
+    const fitsInCurrent =
+      currentChunkMessages.length + sg.length <= maxMsgs &&
+      currentChunkTokens + sessionTokens <= maxTokens;
+
+    if (fitsInCurrent) {
+      currentChunkMessages.push(...sg);
+      currentChunkTokens += sessionTokens;
+      currentSessionIds.push(sessionId);
+    } else if (sessionTokens <= maxTokens && sg.length <= maxMsgs) {
+      // Session fits in its own chunk — flush current first
+      finalizeChunk();
+      currentChunkMessages.push(...sg);
+      currentChunkTokens += sessionTokens;
+      currentSessionIds.push(sessionId);
+    } else {
+      // Oversized session — split message by message
+      if (currentChunkMessages.length > 0) finalizeChunk();
+
+      for (const rawMsg of sg) {
+        const msg = truncateMessageIfOversized(rawMsg);
+        const msgTokens = estimateChunkPayloadTokens([msg]);
+
+        if (
+          currentChunkMessages.length > 0 &&
+          (currentChunkMessages.length >= maxMsgs ||
+            currentChunkTokens + msgTokens > maxTokens)
+        ) {
+          finalizeChunk();
+        }
+
+        currentChunkMessages.push(msg);
+        currentChunkTokens += msgTokens;
+        if (!currentSessionIds.includes(sessionId)) {
+          currentSessionIds.push(sessionId);
+        }
+      }
     }
-
-    currentChunkSessions.push(`session_${sessionGroups.indexOf(sg) + 1}`);
-    currentChunkMessages.push(...sg);
   }
 
-  // Finalize last chunk
-  if (currentChunkMessages.length > 0) {
-    chunks.push(buildChunk(chunkIndex, currentChunkSessions, currentChunkMessages));
+  finalizeChunk();
+
+  // ── 4. If more chunks than cap, sample representative chunks ──────────────
+  if (allRawChunks.length <= maxChunksCap) {
+    return allRawChunks;
   }
 
-  return chunks;
+  console.log(
+    `[Chunker] Chat produced ${allRawChunks.length} chunks. Sampling ${maxChunksCap} representative timeline chunks.`
+  );
+  return sampleEvenly(allRawChunks, maxChunksCap);
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 function buildChunk(index, sessionIds, messages) {
-  const sorted = [...messages].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-  const participants = [...new Set(sorted.map(m => m.sender).filter(Boolean))];
+  const sorted = [...messages].sort(
+    (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+  );
+  const participants = [
+    ...new Set(sorted.map(m => m.sender).filter(Boolean)),
+  ];
 
   return {
     id: `chunk_${index + 1}`,
@@ -95,4 +152,15 @@ function buildChunk(index, sessionIds, messages) {
       type: m.type,
     })),
   };
+}
+
+function sampleEvenly(arr, count) {
+  if (arr.length <= count) return arr;
+  const result = [arr[0]];
+  const step = (arr.length - 1) / (count - 1);
+  for (let i = 1; i < count - 1; i++) {
+    result.push(arr[Math.round(i * step)]);
+  }
+  result.push(arr[arr.length - 1]);
+  return result.map((c, i) => ({ ...c, id: `chunk_${i + 1}` }));
 }

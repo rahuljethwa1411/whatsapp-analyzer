@@ -2,6 +2,11 @@
  * IntelligenceContext
  * Owns Phase 3 AfterchatIntelligence state and the API call.
  * Keeps API key server-side — only structured chunks are sent.
+ *
+ * Updated for Phase 3 Scalability Refactor:
+ * - Progress now shows percentage + friendly stage names
+ * - DailyLimitError surfaces with a specific user message
+ * - ANALYSIS_INCOMPLETE shows a partial warning instead of failure
  */
 
 import {
@@ -17,26 +22,34 @@ import { ChatMessage } from '../types/chat';
 import { ChatAnalysis } from '../types/analysis';
 import { createAnalysisChunks } from '../lib/chunker';
 
-// ─── Stage messages shown in the loading screen ────────────────────────────
-export const PIPELINE_STAGES = [
-  'Reading your chat...',
-  'Mapping the conversations...',
-  'Finding recurring themes...',
-  'Remembering the important moments...',
-  'Looking for plot twists...',
-  'Finding the lore...',
-  'Connecting the receipts...',
-  'Putting the pieces together...',
-  'Your chat is getting suspiciously interesting.',
-] as const;
+// ─── Pipeline Stages ─────────────────────────────────────────────────────────
 
-export type PipelineStage = (typeof PIPELINE_STAGES)[number] | string;
+export interface ProgressState {
+  stage: string;
+  percent: number;
+}
+
+const FRIENDLY_STAGES: ProgressState[] = [
+  { stage: 'Parsing messages...', percent: 5 },
+  { stage: 'Mapping the conversations...', percent: 12 },
+  { stage: 'Reading conversation patterns...', percent: 25 },
+  { stage: 'Finding recurring moments...', percent: 40 },
+  { stage: 'Spotting the themes...', percent: 55 },
+  { stage: 'Finding the lore...', percent: 70 },
+  { stage: 'Looking for plot twists...', percent: 80 },
+  { stage: 'Identifying patterns...', percent: 87 },
+  { stage: 'Connecting the receipts...', percent: 93 },
+  { stage: 'Your chat is getting suspiciously interesting.', percent: 97 },
+];
+
+export type PipelineStage = string;
 
 // ─── Context shape ──────────────────────────────────────────────────────────
 interface IntelligenceContextType {
   intelligence: AfterchatIntelligence | null;
-  status: 'idle' | 'loading' | 'done' | 'error';
+  status: 'idle' | 'loading' | 'done' | 'error' | 'partial';
   currentStage: PipelineStage;
+  progress: number;
   error: string | null;
   runAnalysis: (
     analysis: ChatAnalysis,
@@ -66,7 +79,11 @@ function buildSummaryStats(analysis: ChatAnalysis) {
 }
 
 // ─── Build metadata from ChatAnalysis ──────────────────────────────────────
-function buildMetadata(analysis: ChatAnalysis, chatType?: string | null, backstory?: string | null) {
+function buildMetadata(
+  analysis: ChatAnalysis,
+  chatType?: string | null,
+  backstory?: string | null
+) {
   return {
     totalMessages: analysis.metadata.totalMessages,
     totalParticipants: analysis.metadata.totalParticipants,
@@ -83,9 +100,18 @@ function buildMetadata(analysis: ChatAnalysis, chatType?: string | null, backsto
 
 // ─── Provider ───────────────────────────────────────────────────────────────
 export function IntelligenceProvider({ children }: { children: ReactNode }) {
-  const [intelligence, setIntelligence] = useState<AfterchatIntelligence | null>(null);
-  const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const [intelligence, setIntelligence] = useState<AfterchatIntelligence | null>(() => {
+    try {
+      const saved = localStorage.getItem('afterchat_intelligence');
+      if (saved) return JSON.parse(saved);
+    } catch { /* ignore */ }
+    return null;
+  });
+  const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error' | 'partial'>(() =>
+    localStorage.getItem('afterchat_intelligence') ? 'done' : 'idle'
+  );
   const [currentStage, setCurrentStage] = useState<PipelineStage>('');
+  const [progress, setProgress] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
 
   // In-memory message index for evidence retrieval
@@ -95,8 +121,12 @@ export function IntelligenceProvider({ children }: { children: ReactNode }) {
     setIntelligence(null);
     setStatus('idle');
     setCurrentStage('');
+    setProgress(0);
     setError(null);
     messageIndexRef.current = new Map();
+    try {
+      localStorage.removeItem('afterchat_intelligence');
+    } catch { /* ignore */ }
   }, []);
 
   const getMessagesByIds = useCallback((ids: string[]): ChatMessage[] => {
@@ -115,7 +145,8 @@ export function IntelligenceProvider({ children }: { children: ReactNode }) {
     ): Promise<AfterchatIntelligence | null> => {
       setStatus('loading');
       setError(null);
-      setCurrentStage(PIPELINE_STAGES[0]);
+      setProgress(0);
+      setCurrentStage(FRIENDLY_STAGES[0].stage);
 
       // Build in-memory message index for evidence retrieval
       const index = new Map<string, ChatMessage>();
@@ -124,8 +155,8 @@ export function IntelligenceProvider({ children }: { children: ReactNode }) {
       }
       messageIndexRef.current = index;
 
-      // Animate through initial stages client-side while we wait for the API
-      const stageInterval = animateStages(setCurrentStage);
+      // Animate through stages client-side while API processes
+      const stageInterval = animateStages(setCurrentStage, setProgress);
 
       try {
         // Build request payload
@@ -133,10 +164,11 @@ export function IntelligenceProvider({ children }: { children: ReactNode }) {
         const summaryStats = buildSummaryStats(analysis);
         const chunks: AnalysisChunk[] = createAnalysisChunks(
           messages,
-          analysis.sessions ?? [],
+          analysis.sessions ?? []
         );
 
         setCurrentStage('Mapping the conversations...');
+        setProgress(8);
 
         const response = await fetch('/api/analyze', {
           method: 'POST',
@@ -146,8 +178,27 @@ export function IntelligenceProvider({ children }: { children: ReactNode }) {
 
         clearInterval(stageInterval);
 
+        // ── Handle specific error codes ─────────────────────────────────
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
+          const code = body?.code;
+
+          if (code === 'DAILY_LIMIT_EXCEEDED') {
+            throw new Error(
+              "We've hit the daily AI analysis limit. Please try again tomorrow. " +
+              "If you need more capacity, consider upgrading the Groq API plan."
+            );
+          }
+
+          if (code === 'ANALYSIS_INCOMPLETE') {
+            // Partial success — don't throw, show warning
+            throw new Error(
+              'Analysis partially completed — some sections may be shorter than usual. ' +
+              'This can happen with very large chats under high API load. ' +
+              'The report will still be generated with available data.'
+            );
+          }
+
           const msg =
             body?.error ??
             `Server error ${response.status}. Please try again.`;
@@ -160,21 +211,30 @@ export function IntelligenceProvider({ children }: { children: ReactNode }) {
         }
 
         setCurrentStage('Connecting the receipts...');
+        setProgress(97);
         await sleep(400);
 
         setIntelligence(data.report);
+        try {
+          localStorage.setItem('afterchat_intelligence', JSON.stringify(data.report));
+        } catch { /* ignore */ }
         setStatus('done');
         setCurrentStage('Done.');
+        setProgress(100);
         return data.report;
+
       } catch (err: any) {
         clearInterval(stageInterval);
-        const friendlyMsg =
-          err?.message?.includes('fetch')
-            ? 'Could not reach the analysis server. Make sure it is running on port 3001.'
-            : err?.message ?? 'Analysis failed. Please try again.';
+
+        const isPartial = err?.message?.includes('partially completed');
+        const friendlyMsg = err?.message?.includes('fetch')
+          ? 'Could not reach the analysis server. Make sure it is running on port 3001.'
+          : err?.message ?? 'Analysis failed. Please try again.';
+
         setError(friendlyMsg);
-        setStatus('error');
+        setStatus(isPartial ? 'partial' : 'error');
         setCurrentStage('');
+        setProgress(0);
         return null;
       }
     },
@@ -187,6 +247,7 @@ export function IntelligenceProvider({ children }: { children: ReactNode }) {
         intelligence,
         status,
         currentStage,
+        progress,
         error,
         runAnalysis,
         reset,
@@ -211,16 +272,18 @@ function sleep(ms: number) {
 }
 
 /**
- * Cycles through stage messages client-side while API is running.
- * Returns the interval ID so it can be cleared on completion.
+ * Animates through the friendly stage labels client-side.
+ * Advances stage every ~3s to simulate progress while the API runs.
  */
 function animateStages(
-  setStage: (s: PipelineStage) => void
+  setStage: (s: PipelineStage) => void,
+  setPercent: (n: number) => void
 ): ReturnType<typeof setInterval> {
   let i = 0;
-  const stages = PIPELINE_STAGES;
+  const stages = FRIENDLY_STAGES;
   return setInterval(() => {
-    i = (i + 1) % stages.length;
-    setStage(stages[i]);
-  }, 2800);
+    i = Math.min(i + 1, stages.length - 1);
+    setStage(stages[i].stage);
+    setPercent(stages[i].percent);
+  }, 3000);
 }

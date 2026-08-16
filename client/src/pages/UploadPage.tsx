@@ -38,7 +38,21 @@ export function UploadPage() {
   const [isContactOpen, setIsContactOpen] = useState(false);
   const [backstory, setBackstory] = useState('');
   const analysis = useAnalysisSequence();
-  const { analysis: calculatedAnalysis, error: parseError, processRawText } = useChatAnalysis();
+  const {
+    analysis: calculatedAnalysis,
+    error: parseError,
+    processRawText,
+    isUsingMock,
+    rawFileName,
+    resetAnalysis,
+  } = useChatAnalysis();
+
+  const hasImportedFile = Boolean(file || (calculatedAnalysis && !isUsingMock));
+
+  const handleResetFile = () => {
+    setFile(null);
+    resetAnalysis();
+  };
 
   // Check if ?demo=true was passed in URL
   useEffect(() => {
@@ -71,19 +85,21 @@ export function UploadPage() {
 
   const handleStartAnalysis = async () => {
     const chatCat = selected || 'Friend group';
-    if (file && !calculatedAnalysis) {
+    if (file) {
       try {
         const { text, fileName } = await extractChatFile(file);
-        processRawText(text, fileName || file.name);
-        analysis.beginAnalysis(chatCat, backstory);
+        const res = processRawText(text, fileName || file.name);
+        if (res.success) {
+          await analysis.beginAnalysis(chatCat, backstory);
+        }
       } catch (err: any) {
         console.error('Failed to process upload file:', err);
       }
     } else {
-      if (!calculatedAnalysis) {
+      if (!calculatedAnalysis || isUsingMock) {
         processRawText(sampleTxtFixture, 'sample_whatsapp_chat.txt');
       }
-      analysis.beginAnalysis(chatCat, backstory);
+      await analysis.beginAnalysis(chatCat, backstory);
     }
   };
 
@@ -92,6 +108,7 @@ export function UploadPage() {
       ready={analysis.isReady}
       aiStatus={analysis.aiStatus}
       currentStage={analysis.currentStage}
+      progress={analysis.progress}
       aiError={analysis.aiError}
     />
   );
@@ -147,16 +164,18 @@ export function UploadPage() {
         {step === 2 && (
           <FadeReveal>
             <p className="eyebrow">STEP 02 · THE ARCHIVE</p>
-            <h1>Drop your chat here.</h1>
+            <h1>{hasImportedFile ? 'Chat Ready to Analyze' : 'Drop your chat here.'}</h1>
             <p className="lede">
-              Export your WhatsApp conversation and upload the .txt or .zip file archive.
+              {hasImportedFile
+                ? 'Your WhatsApp export has been loaded into memory. You can continue or upload a different chat file.'
+                : 'Export your WhatsApp conversation and upload the .txt or .zip file archive.'}
             </p>
             <div className="upload-archive-layout">
               <div>
                 <label
                   className={
                     'drop ' +
-                    (file || calculatedAnalysis ? 'hasfile ' : '') +
+                    (hasImportedFile ? 'hasfile ' : '') +
                     (isDragging ? 'is-dragging' : '')
                   }
                   onDragOver={(e) => {
@@ -177,15 +196,18 @@ export function UploadPage() {
                     accept=".txt,.zip,application/zip,application/x-zip-compressed"
                     onChange={(event) => handleFileChange(event.target.files?.[0] || null)}
                   />
-                  {file || calculatedAnalysis ? (
+                  {hasImportedFile ? (
                     <>
                       <b>Chat imported ✓</b>
                       <p>
                         {calculatedAnalysis
                           ? `${calculatedAnalysis.metadata.totalMessages.toLocaleString()} messages parsed (${calculatedAnalysis.metadata.totalParticipants} participants)`
-                          : '24,821 messages · 4 people'}
+                          : 'Chat data ready'}
                       </p>
-                      <small>{file?.name || 'sample_whatsapp_chat.txt'} ({file ? (file.size / 1024).toFixed(1) : '14.2'} KB)</small>
+                      <small>
+                        {file?.name || rawFileName || 'chat_export.txt'}{' '}
+                        {file ? `(${(file.size / 1024).toFixed(1)} KB)` : ''}
+                      </small>
                     </>
                   ) : (
                     <>
@@ -196,12 +218,22 @@ export function UploadPage() {
                     </>
                   )}
                 </label>
-                <div className="upload-btn-row">
-                  {(file || calculatedAnalysis) && (
-                    <button className="button" onClick={() => setStep(3)}>
-                      Continue <span>→</span>
-                    </button>
-                  )}
+                <div className="upload-btn-row" style={{ display: 'flex', gap: 12, marginTop: 16, alignItems: 'center' }}>
+                  {hasImportedFile ? (
+                    <>
+                      <button className="button" onClick={() => setStep(3)}>
+                        Continue <span>→</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="text-button"
+                        style={{ opacity: 0.8 }}
+                        onClick={handleResetFile}
+                      >
+                        Upload a new chat ↻
+                      </button>
+                    </>
+                  ) : null}
                 </div>
               </div>
               <WhatsAppExportGuide />
@@ -222,8 +254,7 @@ export function UploadPage() {
               onChange={(e) => setBackstory(e.target.value)}
             />
             <p className="example">
-              Example: This is my college friend group. We've known each other since 2022. The Goa
-              trip mentioned in the chat never happened.
+              Example: This is my college friend group. We've known each other since 2022. We talk a lot about football and weekend plans.
             </p>
             <div className="actions">
               <button className="text-button" onClick={handleStartAnalysis}>

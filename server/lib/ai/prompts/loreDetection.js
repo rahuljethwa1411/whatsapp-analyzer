@@ -1,6 +1,7 @@
 /**
  * Lore Detection Prompt — Gen-Z Documentary Archaeologist
- * Used for: finding memorable moments, inside jokes, and recurring references.
+ * Updated to use CompactChatMemory instead of raw chunkInsights + allMessages.
+ * This ensures the 70B model NEVER receives the full raw message list.
  */
 
 export function buildLoreDetectionSystemPrompt() {
@@ -14,8 +15,8 @@ ARCHAEOLOGIST MINDSET:
 - Titles must be specific to this exact chat (e.g. "The 3 AM Maggi Incident" instead of "Funny Joke").
 
 RULES:
-1. Humor must come directly from real evidence in the chat. Never fabricate context.
-2. Every lore item MUST have real evidenceMessageIds.
+1. Humor must come directly from real evidence in the compact memory. Never fabricate context.
+2. Every lore item MUST have real evidenceMessageIds (only IDs mentioned in the evidence you were given).
 3. Titles must be hyper-specific to the actual chat content.
 4. Keep descriptions grounded and factual — Phase 4 story engine handles the comedic narration.
 5. funnyScore reflects comedic value (0.0 - 1.0).
@@ -24,30 +25,30 @@ RULES:
 8. Return JSON only.`;
 }
 
-export function buildLoreDetectionUserPrompt(chunkInsights, allMessages) {
-  const allMoments = chunkInsights.flatMap(ci => ci.moments || []);
-  const allEvents = chunkInsights.flatMap(ci => ci.events || []);
-  const phrases = [...new Set(chunkInsights.flatMap(ci => ci.recurringPhrases || []))];
+/**
+ * @param {Object} compactMemory — CompactChatMemory
+ */
+export function buildLoreDetectionUserPrompt(compactMemory) {
+  const moments = compactMemory.globalMoments || [];
+  const events = compactMemory.globalEvents || [];
+  const themes = compactMemory.recurringThemes || [];
 
-  const notableIds = new Set([
-    ...allMoments.flatMap(m => m.messageIds || []),
-    ...allEvents.flatMap(e => e.messageIds || []),
-  ]);
-  const sampleMessages = allMessages
-    .filter(m => notableIds.has(m.id))
-    .slice(0, 40)
-    .map(m => `[${m.id}] ${m.sender}: ${m.text}`);
+  // Collect evidence IDs referenced in memory for the model to use
+  const allEvidenceIds = [
+    ...moments.flatMap(m => m.messageIds || []),
+    ...events.flatMap(e => e.messageIds || []),
+  ].slice(0, 60);
 
-  return `Notable moments found across chunks:
-${JSON.stringify(allMoments.slice(0, 20), null, 2)}
+  return `Notable moments found across the conversation:
+${JSON.stringify(moments.slice(0, 20), null, 2)}
 
 Notable events:
-${JSON.stringify(allEvents.slice(0, 10), null, 2)}
+${JSON.stringify(events.slice(0, 12), null, 2)}
 
-Recurring phrases: ${phrases.slice(0, 15).join(', ')}
+Recurring themes and phrases: ${themes.slice(0, 15).join(', ')}
 
-Evidence messages:
-${sampleMessages.join('\n')}
+Available evidence message IDs (only use these):
+${allEvidenceIds.join(', ')}
 
 Unearth 3-8 memorable lore items. Return JSON:
 {

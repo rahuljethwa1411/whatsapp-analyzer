@@ -511,8 +511,18 @@ em {
   color: var(--ink);
   margin-left: 9px;
 }
-.report {
+main.report,
+.phase4-report {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 40px;
   overflow: hidden;
+}
+@media (max-width: 768px) {
+  main.report,
+  .phase4-report {
+    padding: 0 20px;
+  }
 }
 .report-progress {
   height: 3px;
