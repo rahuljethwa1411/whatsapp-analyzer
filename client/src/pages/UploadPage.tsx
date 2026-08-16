@@ -108,9 +108,6 @@ export function UploadPage() {
             <i />
             <span className={step >= 3 ? 'active' : ''}>03</span>
           </div>
-          <button type="button" className="text-button quick-demo-badge" onClick={handleQuickDemo}>
-            ⚡ Try Instant Sample Chat
-          </button>
         </div>
 
         {parseError && (
@@ -205,9 +202,6 @@ export function UploadPage() {
                       Continue <span>→</span>
                     </button>
                   )}
-                  <button type="button" className="text-button" onClick={handleQuickDemo}>
-                    Use sample chat instead
-                  </button>
                 </div>
               </div>
               <WhatsAppExportGuide />

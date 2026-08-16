@@ -93,9 +93,6 @@ export function LandingPage() {
               <a className="button" href="/upload">
                 Upload your chat <span>→</span>
               </a>
-              <a className="text-button hero-sample-btn" href="/upload?demo=true">
-                Try instant demo ↗
-              </a>
             </div>
 
             {/* Trust Badges */}
