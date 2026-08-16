@@ -67,6 +67,17 @@ export type PatternInsight = {
   evidenceMessageIds: string[];
 };
 
+export type EvidenceStoreItem = {
+  messageId: string;
+  type?: string;
+  importance?: number;
+  connection?: string;
+  sender?: string | null;
+  timestamp?: string;
+  text?: string;
+  tags?: string[];
+};
+
 export type AfterchatIntelligence = {
   overview: {
     dominantThemes: string[];
@@ -79,6 +90,7 @@ export type AfterchatIntelligence = {
   lore: LoreItem[];
   plotTwists: PlotTwist[];
   patterns: PatternInsight[];
+  _evidenceStore?: EvidenceStoreItem[];
 };
 
 export type IntelligenceStatus = 'idle' | 'loading' | 'done' | 'error';

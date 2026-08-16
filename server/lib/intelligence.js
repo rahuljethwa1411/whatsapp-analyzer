@@ -16,48 +16,30 @@
  *   ✓ Token telemetry tracked throughout
  */
 
-import { GroqProvider, DailyLimitError, InvalidApiKeyError, RequestTooLargeError, getTokenTelemetry, resetTokenTelemetry } from './ai/groq.js';
+import { GroqProvider, DailyLimitError, InvalidApiKeyError, RequestTooLargeError, getTokenTelemetry, resetTokenTelemetry, recordExtractionRecoverySplit, recordExtractionSizeLimitHit, recordExtractionSchemaNormalization } from './ai/groq.js';
 import {
-  CompactChunkExtractionSchema,
-  GlobalDiscoverySchema,
-  StoryEraSchema,
-  CharacterInsightSchema,
-  LoreItemSchema,
-  PlotTwistSchema,
-  PatternInsightSchema,
+  RelationshipInvestigatorSchema,
 } from './ai/schemas/index.js';
 import {
-  buildChunkExtractionSystemPrompt,
-  buildChunkExtractionUserPrompt,
-} from './ai/prompts/chunkExtraction.js';
+  buildExtractionRequest,
+  getExtractionRequestDiagnostics,
+  getExtractionSchema,
+} from './ai/extractionRequest.js';
 import {
-  buildGlobalDiscoverySystemPrompt,
-  buildGlobalDiscoveryUserPrompt,
-} from './ai/prompts/globalDiscovery.js';
-import {
-  buildEraDetectionSystemPrompt,
-  buildEraDetectionUserPrompt,
-} from './ai/prompts/eraDetection.js';
-import {
-  buildCharacterInsightsSystemPrompt,
-  buildCharacterInsightsUserPrompt,
-} from './ai/prompts/characterInsights.js';
-import {
-  buildLoreDetectionSystemPrompt,
-  buildLoreDetectionUserPrompt,
-} from './ai/prompts/loreDetection.js';
-import {
-  buildPlotTwistsSystemPrompt,
-  buildPlotTwistsUserPrompt,
-} from './ai/prompts/plotTwists.js';
-import {
-  buildPatternDetectionSystemPrompt,
-  buildPatternDetectionUserPrompt,
-} from './ai/prompts/patternDetection.js';
+  buildInvestigatorSystemPrompt,
+  buildInvestigatorUserPrompt,
+} from './ai/prompts/investigator.js';
 import { buildCompactMemory } from './memory.js';
-import { buildMessageIndex, validateIntelligenceEvidence } from './evidence.js';
+import {
+  buildMessageIndex,
+  validateIntelligenceEvidence,
+  buildEvidenceStore,
+  formatEvidenceForPrompt,
+  validateInvestigatorRefs,
+  validateChunkExtractionEvidence,
+} from './evidence.js';
 import { createChunks as createTokenChunks } from './chunker.js';
-import { estimateChunkPayloadTokens, MAX_EXTRACTION_INPUT_TOKENS } from './tokenEstimator.js';
+import { estimateExtractionRequest } from './tokenEstimator.js';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -105,7 +87,7 @@ export async function runIntelligencePipeline(request, onProgress = () => {}) {
   // ─── STEP 1: Chunk Extraction (TIER 1 — small model) ─────────────────────
   progress('Reading conversation patterns...', 5);
 
-  const { extractions, chunksSucceeded, chunksFailed } =
+  const { extractions, chunksSucceeded, chunksRecovered, chunksFailed } =
     await extractAllChunks(chunks, provider, (done, total) => {
       const pct = Math.round(5 + (done / total) * 50);
       progress(`Reading conversation patterns... (${done}/${total} batches)`, pct);
@@ -123,9 +105,30 @@ export async function runIntelligencePipeline(request, onProgress = () => {}) {
   const extractionMeta = {
     chunksTotal: chunks.length,
     chunksSucceeded,
+    chunksRecovered,
     chunksFailed,
     extractionModel: provider.extractionModel,
   };
+
+  // ─── STEP 2b: Build Evidence Store (Phase 3 V2) ────────────────────────────
+  // Validates messageIds, deduplicates, sorts by importance.
+  const evidenceStore = buildEvidenceStore(extractions, messageIndex);
+
+  // Dev-mode: print a few sample evidence items to confirm extraction is working
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[Evidence] Sample extracted evidence items:');
+    evidenceStore.slice(0, 3).forEach((item, i) => {
+      console.log(
+        `  #${i + 1} messageId=${item.messageId} sender=${item.sender} importance=${item.importance}\n` +
+        `     type=${item.type}\n` +
+        `     text="${String(item.text).slice(0, 100)}"` +
+        (item.potentialConnections?.length ? `\n     connections=${item.potentialConnections.join(' | ')}` : '')
+      );
+    });
+    if (evidenceStore.length === 0) {
+      console.log('  (no evidence items extracted — check extraction model response)');
+    }
+  }
 
   // Build participant stats from all messages (Phase 2-style, deterministic)
   const participantStats = buildParticipantStats(metadata.participants, allMessages, metadata);
@@ -137,135 +140,93 @@ export async function runIntelligencePipeline(request, onProgress = () => {}) {
     extractionMeta
   );
 
-  // ─── STEP 3: Global Discovery (TIER 2 — synthesis model) ─────────────────
-  progress('Finding recurring themes...', 62);
+  // ─── STEP 3: Relationship Investigator (TIER 2 — unified synthesis) ──────
+  progress('Investigating relationship dynamics...', 68);
 
-  let globalDiscovery = {
-    dominantThemes: [],
-    majorChanges: [],
-    recurringJokes: [],
-    unusualPatterns: [],
-    overallTone: 'conversational',
-    potentialStoryArcs: [],
-  };
+  const formattedEvidence = formatEvidenceForPrompt(evidenceStore, 80);
+  let rawInvestigatorResult = null;
+
   try {
-    globalDiscovery = await provider.complete({
-      systemPrompt: buildGlobalDiscoverySystemPrompt(),
-      userPrompt: buildGlobalDiscoveryUserPrompt(compactMemory, metadata, summaryStats),
-      schema: GlobalDiscoverySchema,
-      tier: 'synthesis',
-    });
-  } catch (err) {
-    if (err instanceof DailyLimitError) throw err;
-    console.warn('[Pipeline] Global discovery failed, using defaults:', err.message);
-  }
-
-  // ─── STEP 4: Era Detection ────────────────────────────────────────────────
-  progress('Detecting conversation eras...', 70);
-
-  let erasResult = { eras: [] };
-  try {
-    erasResult = await provider.complete({
-      systemPrompt: buildEraDetectionSystemPrompt(),
-      userPrompt: buildEraDetectionUserPrompt(compactMemory, metadata),
-      schema: StoryEraSchema,
-      tier: 'synthesis',
-    });
-  } catch (err) {
-    if (err instanceof DailyLimitError) throw err;
-    console.warn('[Pipeline] Era detection failed:', err.message);
-  }
-
-  // ─── STEP 5: Character Insights ───────────────────────────────────────────
-  progress('Profiling the participants...', 76);
-
-  let charactersResult = { characters: [] };
-  try {
-    // Use a small sample from memory evidence — NOT raw allMessages
-    const sampleMessages = getSampleMessages(compactMemory, allMessages, 25);
-
-    charactersResult = await provider.complete({
-      systemPrompt: buildCharacterInsightsSystemPrompt(),
-      userPrompt: buildCharacterInsightsUserPrompt(
-        metadata.participants,
+    rawInvestigatorResult = await provider.complete({
+      systemPrompt: buildInvestigatorSystemPrompt(),
+      userPrompt: buildInvestigatorUserPrompt({
+        metadata,
+        summaryStats,
         participantStats,
-        sampleMessages
-      ),
-      schema: CharacterInsightSchema,
+        compactMemory,
+        formattedEvidence,
+        evidenceCount: Math.min(evidenceStore.length, 80),
+      }),
+      schema: RelationshipInvestigatorSchema,
       tier: 'synthesis',
+      maxOutputTokens: 3000, // Safe bounded budget for full relationship model
     });
   } catch (err) {
-    if (err instanceof DailyLimitError) throw err;
-    console.warn('[Pipeline] Character insights failed:', err.message);
+    if (err instanceof DailyLimitError || err instanceof InvalidApiKeyError) throw err;
+    console.warn('[Pipeline] Relationship investigator initial attempt failed:', err.message);
+
+    // Attempt one structured repair pass
+    try {
+      console.log('[Pipeline] Attempting one structured repair pass for relationship investigator...');
+      rawInvestigatorResult = await provider.complete({
+        systemPrompt: buildInvestigatorSystemPrompt() + '\n\nIMPORTANT: Output MUST be 100% strictly valid JSON matching the exact schema with standard JSON character escaping.',
+        userPrompt: buildInvestigatorUserPrompt({
+          metadata,
+          summaryStats,
+          participantStats,
+          compactMemory,
+          formattedEvidence,
+          evidenceCount: Math.min(evidenceStore.length, 60),
+        }),
+        schema: RelationshipInvestigatorSchema,
+        tier: 'synthesis',
+        maxOutputTokens: 3000,
+      });
+      console.log('[Pipeline] ✓ Structured repair succeeded.');
+    } catch (repairErr) {
+      if (repairErr instanceof DailyLimitError || repairErr instanceof InvalidApiKeyError) throw repairErr;
+      console.warn('[Pipeline] Structured repair failed, using evidence-grounded baseline:', repairErr.message);
+      rawInvestigatorResult = buildFallbackInvestigatorResult(metadata, compactMemory, evidenceStore);
+    }
   }
 
-  // ─── STEP 6: Lore Detection ───────────────────────────────────────────────
-  progress('Finding the lore...', 82);
+  // ─── STEP 4: Validate Evidence References & Cross-Check ──────────────────
+  progress('Connecting the receipts...', 92);
 
-  let loreResult = { lore: [] };
-  try {
-    loreResult = await provider.complete({
-      systemPrompt: buildLoreDetectionSystemPrompt(),
-      userPrompt: buildLoreDetectionUserPrompt(compactMemory),
-      schema: LoreItemSchema,
-      tier: 'synthesis',
-    });
-  } catch (err) {
-    if (err instanceof DailyLimitError) throw err;
-    console.warn('[Pipeline] Lore detection failed:', err.message);
-  }
+  const { validatedResult: investigatorResult, validCount, strippedCount } =
+    validateInvestigatorRefs(rawInvestigatorResult, messageIndex);
 
-  // ─── STEP 7: Plot Twists ──────────────────────────────────────────────────
-  progress('Looking for plot twists...', 87);
+  // Log investigator metrics report
+  console.log(
+    '\n[Investigator] ═══════════════════════════════════\n' +
+    '[Investigator] RELATIONSHIP INVESTIGATOR METRICS\n' +
+    `[Investigator]   Eras:                ${investigatorResult.eras?.length || 0}\n` +
+    `[Investigator]   Profiles:            ${investigatorResult.participantProfiles?.length || 0}\n` +
+    `[Investigator]   Patterns:            ${investigatorResult.patterns?.length || 0}\n` +
+    `[Investigator]   Contradictions:      ${investigatorResult.contradictions?.length || 0}\n` +
+    `[Investigator]   Callbacks:           ${investigatorResult.callbacks?.length || 0}\n` +
+    `[Investigator]   Foreshadowing:       ${investigatorResult.foreshadowing?.length || 0}\n` +
+    `[Investigator]   Lore items:          ${investigatorResult.lore?.length || 0}\n` +
+    `[Investigator]   Funny moments:       ${investigatorResult.funnyMoments?.length || 0}\n` +
+    `[Investigator]   Turning points:      ${investigatorResult.turningPoints?.length || 0}\n` +
+    `[Investigator]   Plot twists:         ${investigatorResult.plotTwists?.length || 0}\n` +
+    `[Investigator]   Receipt candidates:  ${investigatorResult.receiptCandidates?.length || 0}\n` +
+    `[Investigator]   Evidence refs:       ${validCount} valid, ${strippedCount} stripped\n` +
+    '[Investigator] ═══════════════════════════════════\n'
+  );
 
-  let plotTwistsResult = { plotTwists: [] };
-  try {
-    plotTwistsResult = await provider.complete({
-      systemPrompt: buildPlotTwistsSystemPrompt(),
-      userPrompt: buildPlotTwistsUserPrompt(compactMemory, globalDiscovery),
-      schema: PlotTwistSchema,
-      tier: 'synthesis',
-    });
-  } catch (err) {
-    if (err instanceof DailyLimitError) throw err;
-    console.warn('[Pipeline] Plot twist detection failed:', err.message);
-  }
+  // ─── STEP 5: Map to AfterchatIntelligence (Phase 4 backwards compatibility) ─
+  progress('Finalizing intelligence archive...', 96);
 
-  // ─── STEP 8: Pattern Detection ────────────────────────────────────────────
-  progress('Identifying recurring patterns...', 92);
+  const mappedIntelligence = mapInvestigatorToLegacyIntelligence(
+    investigatorResult,
+    extractionMeta,
+    evidenceStore
+  );
 
-  let patternsResult = { patterns: [] };
-  try {
-    patternsResult = await provider.complete({
-      systemPrompt: buildPatternDetectionSystemPrompt(),
-      userPrompt: buildPatternDetectionUserPrompt(compactMemory),
-      schema: PatternInsightSchema,
-      tier: 'synthesis',
-    });
-  } catch (err) {
-    if (err instanceof DailyLimitError) throw err;
-    console.warn('[Pipeline] Pattern detection failed:', err.message);
-  }
+  // Validate all legacy evidence message IDs
+  const validatedIntelligence = validateIntelligenceEvidence(mappedIntelligence, messageIndex);
 
-  // ─── STEP 9: Build + Validate Final Intelligence ──────────────────────────
-  progress('Connecting the receipts...', 97);
-
-  const rawIntelligence = {
-    overview: {
-      dominantThemes: globalDiscovery.dominantThemes || [],
-      overallTone: globalDiscovery.overallTone || 'conversational',
-      potentialStoryArcs: globalDiscovery.potentialStoryArcs || [],
-      recurringJokes: globalDiscovery.recurringJokes || [],
-    },
-    eras: erasResult.eras || [],
-    characters: charactersResult.characters || [],
-    lore: loreResult.lore || [],
-    plotTwists: plotTwistsResult.plotTwists || [],
-    patterns: patternsResult.patterns || [],
-  };
-
-  // Validate all evidence message IDs (strips invented IDs)
-  const validatedIntelligence = validateIntelligenceEvidence(rawIntelligence, messageIndex);
 
   // ─── STEP 10: Log Telemetry ───────────────────────────────────────────────
   const telemetry = getTokenTelemetry();
@@ -283,7 +244,13 @@ export async function runIntelligencePipeline(request, onProgress = () => {}) {
     `[Pipeline]   Failed requests:   ${telemetry.failedRequests}\n` +
     `[Pipeline]   Rate limit hits:   ${telemetry.rateLimitHits}\n` +
     `[Pipeline]   Size limit hits:   ${telemetry.requestTooLargeHits}\n` +
-    `[Pipeline]   Chunks: ${chunksSucceeded} succeeded / ${chunksFailed} failed / ${chunks.length} total\n` +
+    `[Pipeline]   Recovery splits:   ${telemetry.recoverySplits}\n` +
+    `[Pipeline]   Schema normalizations: ${telemetry.schemaNormalizationEvents}\n` +
+    `[Pipeline]   Unknown evidence types normalized: ${telemetry.unknownEvidenceTypesNormalized}\n` +
+    `[Pipeline]   Original chunks:   ${chunks.length}\n` +
+    `[Pipeline]   Successful logical chunks: ${chunksSucceeded}\n` +
+    `[Pipeline]   Recovered logical chunks:  ${chunksRecovered}\n` +
+    `[Pipeline]   Failed logical chunks:     ${chunksFailed}\n` +
     '[Pipeline] ═══════════════════════════════════════\n'
   );
 
@@ -296,10 +263,12 @@ export async function runIntelligencePipeline(request, onProgress = () => {}) {
 /**
  * Extract all chunks with concurrency limiting, auto-retry on size errors,
  * and graceful partial failure handling.
+ * Returns extractions[] (ChunkEvidence[]) and a flat rawEvidenceStore.
  */
 async function extractAllChunks(chunks, provider, onBatchProgress) {
   const results = [];
   let chunksSucceeded = 0;
+  let chunksRecovered = 0;
   let chunksFailed = 0;
 
   // Process in batches of MAX_PARALLEL_CHUNKS
@@ -313,9 +282,13 @@ async function extractAllChunks(chunks, provider, onBatchProgress) {
     );
 
     for (const result of batchResults) {
-      if (result.status === 'fulfilled' && result.value) {
-        results.push(result.value);
+      if (result.status === 'fulfilled' && result.value?.ok) {
+        results.push(result.value.extraction);
         chunksSucceeded++;
+        if (result.value.recovered) chunksRecovered++;
+      } else if (result.status === 'fulfilled') {
+        console.warn('[Pipeline] Chunk extraction failed permanently:', result.value?.error || 'unknown error');
+        chunksFailed++;
       } else if (result.status === 'rejected') {
         const err = result.reason;
         // Fatal errors must bubble up immediately — stop everything
@@ -341,91 +314,219 @@ async function extractAllChunks(chunks, provider, onBatchProgress) {
     onBatchProgress(Math.min(i + MAX_PARALLEL_CHUNKS, chunks.length), chunks.length);
   }
 
-  return { extractions: results.filter(Boolean), chunksSucceeded, chunksFailed };
+  const extractions = results.filter(Boolean);
+
+  // Log evidence item counts per chunk for debugging
+  const totalEvidenceItems = extractions.reduce((sum, e) => sum + (e.evidence?.length || 0), 0);
+  console.log(
+    `[Pipeline] Extraction complete: ${chunksSucceeded} chunks succeeded, ` +
+    `${chunksRecovered} recovered, ${chunksFailed} failed. Total raw evidence items: ${totalEvidenceItems}.`
+  );
+
+  return { extractions, chunksSucceeded, chunksRecovered, chunksFailed };
 }
 
 /**
- * Extract a single chunk. On RequestTooLargeError, split the chunk and retry
- * the two halves. Never retries the same oversized payload.
+ * Extract a single chunk with pre-flight token validation.
+ *
+ * The new token-aware chunker guarantees every chunk is within budget before
+ * this function is called. The pre-flight check is a safety net; if somehow
+ * a chunk still exceeds the budget, recovery splits the original message array.
  */
-async function extractSingleChunkWithRecovery(chunk, index, total, provider) {
+const MAX_EXTRACTION_RECOVERY_DEPTH = 4;
+
+export async function extractSingleChunkWithRecovery(chunk, index, total, provider, depth = 0) {
   const normalMessages = chunk.messages.filter(m => m.type === 'message');
-  if (normalMessages.length === 0) return null;
+  if (normalMessages.length === 0) {
+    return { ok: false, recovered: false, error: `${chunk.id} has no extractable messages` };
+  }
+
+  // Build the exact request once, then use the same object for estimation and Groq.
+  const request = buildExtractionRequest(chunk, index, total, {
+    model: provider.extractionModel,
+    maxOutputTokens: 1200,
+  });
+  const tokenInfo = estimateExtractionRequest(request);
+  logExtractionTokenDebug(chunk, request, tokenInfo);
+
+  if (!tokenInfo.safe) {
+    recordExtractionSizeLimitHit();
+    console.error(
+      `[Pipeline] PRE-FLIGHT FAILED: ${chunk.id} estimated ~${tokenInfo.estimatedInputTokens} input tokens ` +
+      `exceeds safe budget of ${tokenInfo.safeBudget}. Splitting before the API call.`
+    );
+    return splitAndRecoverChunk(chunk, index, total, provider, depth, `pre-flight estimate ${tokenInfo.estimatedInputTokens}/${tokenInfo.safeBudget}`);
+  }
 
   try {
-    return await extractSingleChunk(chunk, index, total, provider);
+    const rawExtraction = await extractSingleChunk(request, provider);
+    const { extraction, stats } = validateChunkExtractionEvidence(rawExtraction, chunk);
+    if (stats.unknownEvidenceTypesNormalized > 0) {
+      recordExtractionSchemaNormalization(stats.unknownEvidenceTypesNormalized);
+      if (process.env.NODE_ENV !== 'production') {
+        const examples = extraction.evidence
+          .filter(item => item.original_type)
+          .map(item => `"${item.original_type}" -> "${item.type}"`)
+          .slice(0, 3)
+          .join(', ');
+        console.log(`[Extraction] ${chunk.id}: normalized unknown evidence type(s): ${examples}`);
+      }
+    }
+    return { ok: true, recovered: depth > 0, extraction, validation: stats };
   } catch (err) {
+    // Fatal errors must always propagate immediately
     if (err instanceof DailyLimitError || err instanceof InvalidApiKeyError) throw err;
 
     if (err instanceof RequestTooLargeError) {
-      // Split chunk in half and retry each half
-      console.warn(
-        `[Pipeline] Chunk ${chunk.id} too large (${normalMessages.length} msgs). ` +
-        `Splitting into halves and retrying.`
+      if (!err.telemetryRecorded) recordExtractionSizeLimitHit();
+      console.error(
+        `[Pipeline] ❌ RequestTooLargeError on ${chunk.id} despite pre-flight passing ` +
+        `(~${tokenInfo.estimatedInputTokens} estimated). Splitting. This indicates the token estimator ` +
+        `is underestimating for this content type.`
       );
-      return await extractSplitChunk(chunk, index, total, provider);
+      return splitAndRecoverChunk(chunk, index, total, provider, depth, err.message);
     }
 
-    // Other errors — log and return null
+    // Other errors — log and skip gracefully
     console.warn(`[Pipeline] Chunk ${chunk.id} extraction failed:`, err.message);
-    return null;
+    return { ok: false, recovered: false, error: err.message };
   }
 }
 
-/**
- * Split an oversized chunk into two halves and extract each.
- * Returns a merged extraction result.
- */
-async function extractSplitChunk(chunk, index, total, provider) {
-  const normalMessages = chunk.messages.filter(m => m.type === 'message');
-  const mid = Math.floor(normalMessages.length / 2);
+async function splitAndRecoverChunk(chunk, index, total, provider, depth, reason) {
+  if (depth >= MAX_EXTRACTION_RECOVERY_DEPTH || chunk.messages.length < 2) {
+    console.error(
+      `[Pipeline] ${chunk.id} too large; recovery failed at depth ${depth}. ` +
+      `Reason: ${String(reason).slice(0, 180)}`
+    );
+    return { ok: false, recovered: depth > 0, error: `${chunk.id} too large after recursive splitting` };
+  }
 
-  const halfA = {
-    ...chunk,
-    id: `${chunk.id}_a`,
-    messages: normalMessages.slice(0, mid),
-    endAt: normalMessages[mid - 1]?.timestamp || chunk.endAt,
-  };
+  const midpoint = Math.ceil(chunk.messages.length / 2);
+  const first = makeRecoverySubchunk(chunk, chunk.messages.slice(0, midpoint), 'a');
+  const second = makeRecoverySubchunk(chunk, chunk.messages.slice(midpoint), 'b');
 
-  const halfB = {
-    ...chunk,
-    id: `${chunk.id}_b`,
-    messages: normalMessages.slice(mid),
-    startAt: normalMessages[mid]?.timestamp || chunk.startAt,
-  };
+  recordExtractionRecoverySplit();
+  console.warn(
+    `[Pipeline] ${chunk.id} too large; splitting at depth ${depth} -> ` +
+    `${first.id} (${first.messages.length} messages), ${second.id} (${second.messages.length} messages).`
+  );
 
-  const [resultA, resultB] = await Promise.allSettled([
-    extractSingleChunk(halfA, index, total, provider),
-    extractSingleChunk(halfB, index, total, provider),
+  const [firstResult, secondResult] = await Promise.all([
+    extractSingleChunkWithRecovery(first, index, total, provider, depth + 1),
+    extractSingleChunkWithRecovery(second, index, total, provider, depth + 1),
   ]);
 
-  const a = resultA.status === 'fulfilled' ? resultA.value : null;
-  const b = resultB.status === 'fulfilled' ? resultB.value : null;
+  const recoveredExtractions = [firstResult, secondResult]
+    .filter(result => result?.ok && result.extraction)
+    .map(result => result.extraction);
 
-  if (!a && !b) return null;
-  if (!a) return b;
-  if (!b) return a;
+  if (recoveredExtractions.length === 0) {
+    return { ok: false, recovered: true, error: `${chunk.id} subchunks failed after splitting` };
+  }
 
-  // Merge the two half-results
+  if (recoveredExtractions.length < 2) {
+    console.warn(`[Pipeline] ${chunk.id} partially recovered: ${recoveredExtractions.length}/2 subchunks succeeded.`);
+  }
+
   return {
-    period: { start: a.period?.start || chunk.startAt, end: b.period?.end || chunk.endAt },
-    topics: [...new Set([...(a.topics || []), ...(b.topics || [])])].slice(0, 8),
-    events: [...(a.events || []), ...(b.events || [])].slice(0, 6),
-    notableMoments: [...(a.notableMoments || []), ...(b.notableMoments || [])].slice(0, 6),
-    patterns: [...(a.patterns || []), ...(b.patterns || [])].slice(0, 4),
-    relationshipChanges: [...(a.relationshipChanges || []), ...(b.relationshipChanges || [])].slice(0, 3),
-    recurringThemes: [...new Set([...(a.recurringThemes || []), ...(b.recurringThemes || [])])].slice(0, 5),
+    ok: true,
+    recovered: true,
+    extraction: mergeExtractionResults(chunk, recoveredExtractions),
   };
 }
 
-async function extractSingleChunk(chunk, index, total, provider) {
-  return await provider.complete({
-    systemPrompt: buildChunkExtractionSystemPrompt(),
-    userPrompt: buildChunkExtractionUserPrompt(chunk, index, total),
-    schema: CompactChunkExtractionSchema,
+function makeRecoverySubchunk(parentChunk, messages, suffix) {
+  return {
+    ...parentChunk,
+    id: `${parentChunk.id}${suffix}`,
+    messages,
+    startAt: messages[0]?.timestamp || parentChunk.startAt,
+    endAt: messages[messages.length - 1]?.timestamp || parentChunk.endAt,
+  };
+}
+
+function mergeExtractionResults(originalChunk, extractions) {
+  const periodStarts = [
+    originalChunk.startAt,
+    ...extractions.map(e => e.period?.start),
+  ].filter(Boolean).sort();
+  const periodEnds = [
+    originalChunk.endAt,
+    ...extractions.map(e => e.period?.end),
+  ].filter(Boolean).sort();
+
+  return {
+    period: {
+      start: periodStarts[0] || '',
+      end: periodEnds[periodEnds.length - 1] || '',
+    },
+    topics: dedupeStrings(extractions.flatMap(e => e.topics || [])).slice(0, 8),
+    recurringThemes: dedupeStrings(extractions.flatMap(e => e.recurringThemes || [])).slice(0, 5),
+    evidence: mergeEvidenceItems(extractions.flatMap(e => e.evidence || [])).slice(0, 20),
+  };
+}
+
+function dedupeStrings(values) {
+  const seen = new Set();
+  const output = [];
+  for (const value of values) {
+    const normalized = String(value || '').trim();
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(normalized);
+  }
+  return output;
+}
+
+function mergeEvidenceItems(items) {
+  const byKey = new Map();
+  for (const item of items) {
+    const key = evidenceDedupeKey(item);
+    const existing = byKey.get(key);
+    if (!existing || (item.importance || 0) > (existing.importance || 0)) {
+      byKey.set(key, item);
+    }
+  }
+  return [...byKey.values()].sort((a, b) => (b.importance || 0) - (a.importance || 0));
+}
+
+function evidenceDedupeKey(item) {
+  if (item.messageId) return `message:${item.messageId}`;
+  if (item.receiptId) return `receipt:${item.receiptId}`;
+  return [
+    item.timestamp || '',
+    item.sender || '',
+    item.text || item.quote || item.description || '',
+  ].join('|').toLowerCase();
+}
+
+async function extractSingleChunk(request, provider) {
+  return await provider.completeRequest({
+    request,
+    schema: getExtractionSchema(),
     tier: 'extraction',
-    maxOutputTokens: 2048,
   });
+}
+
+function logExtractionTokenDebug(chunk, request, tokenInfo) {
+  if (process.env.TOKEN_ESTIMATOR_DEBUG !== '1') return;
+  const diagnostics = getExtractionRequestDiagnostics(request, chunk);
+  console.log(
+    '[TokenEstimator Debug]\n' +
+    `chunk: ${diagnostics.chunk}\n` +
+    `messages: ${diagnostics.messages}\n` +
+    `model: ${diagnostics.model}\n` +
+    `system_prompt_chars: ${diagnostics.systemPromptChars}\n` +
+    `user_prompt_chars: ${diagnostics.userPromptChars}\n` +
+    `schema_chars: ${diagnostics.schemaChars}\n` +
+    `serialized_messages_chars: ${diagnostics.serializedMessagesChars}\n` +
+    `total_serialized_request_chars: ${diagnostics.totalSerializedRequestChars}\n` +
+    `estimated_input_tokens: ${tokenInfo.estimatedInputTokens}\n` +
+    `safe_budget: ${tokenInfo.safeBudget}`
+  );
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -486,4 +587,180 @@ function getSampleMessages(compactMemory, allMessages, maxCount) {
   }
 
   return evidenceMsgs.slice(0, maxCount);
+}
+
+/**
+ * Maps the rich RelationshipInvestigator result to the legacy AfterchatIntelligence structure
+ * for 100% backwards compatibility with Phase 4 story generation and UI components.
+ * Also preserves the complete investigator result in `_investigatorResult`.
+ */
+function mapInvestigatorToLegacyIntelligence(investigatorResult, extractionMeta, evidenceStore) {
+  // Dominant themes & tone
+  const dominantThemes = investigatorResult.keyThemes && investigatorResult.keyThemes.length > 0
+    ? investigatorResult.keyThemes
+    : (investigatorResult.overarchingStory?.keyThemes || []);
+  const overallTone = investigatorResult.overarchingStory?.overallDynamic || 'conversational';
+
+  // Potential story arcs
+  const potentialStoryArcs = [
+    investigatorResult.overarchingStory?.opening,
+    investigatorResult.overarchingStory?.development,
+    investigatorResult.overarchingStory?.majorTurn,
+    investigatorResult.overarchingStory?.currentState,
+  ].filter(Boolean);
+
+  // Recurring jokes from lore & funny moments
+  const recurringJokes = (investigatorResult.lore || [])
+    .map(l => l.name)
+    .concat((investigatorResult.funnyMoments || []).map(f => f.moment))
+    .slice(0, 8);
+
+  // Map eras
+  const eras = (investigatorResult.eras || []).map((era, idx) => ({
+    id: era.id || `era_${idx + 1}`,
+    title: era.title,
+    startAt: era.startDate,
+    endAt: era.endDate,
+    summary: era.summary,
+    dominantTopics: era.dominantTopics || era.majorChanges || [],
+    tone: era.tone || 'conversational',
+    importance: 0.9,
+    evidenceMessageIds: (era.evidence || []).map(e => e.messageId).filter(Boolean),
+  }));
+
+  // Map characters / participant profiles
+  const characters = (investigatorResult.participantProfiles || []).map(p => {
+    const selfEv = (p.selfImage || []).flatMap(si => (si.evidence || []).map(e => e.messageId));
+    const obsEv = (p.observedBehavior || []).flatMap(ob => (ob.evidence || []).map(e => e.messageId));
+    const allEvIds = [...new Set([...selfEv, ...obsEv])].filter(Boolean);
+
+    const obsTraits = (p.observedBehavior || []).map(ob => ob.observation)
+      .concat(p.recurringHabits || [])
+      .slice(0, 6);
+
+    const description = (p.observedBehavior && p.observedBehavior[0]?.observation)
+      || p.communicationStyle
+      || 'Active participant in the conversation';
+
+    return {
+      participant: p.participant,
+      title: p.communicationStyle || 'Participant',
+      description,
+      observableTraits: obsTraits.length > 0 ? obsTraits : ['Active contributor'],
+      confidence: 0.9,
+      evidenceMessageIds: allEvIds,
+    };
+  });
+
+  // Map lore
+  const lore = (investigatorResult.lore || []).map((l, idx) => ({
+    id: l.id || `lore_${idx + 1}`,
+    title: l.name,
+    description: `${l.origin ? l.origin + ' — ' : ''}${l.howItEvolved || ''}`,
+    date: l.evidence?.[0]?.timestamp || '',
+    participants: [],
+    funnyScore: 0.85,
+    importance: 0.85,
+    evidenceMessageIds: (l.evidence || []).map(e => e.messageId).filter(Boolean),
+  }));
+
+  // Map plot twists
+  const plotTwists = (investigatorResult.plotTwists || []).map((pt, idx) => ({
+    id: pt.id || `twist_${idx + 1}`,
+    title: pt.title,
+    description: pt.description,
+    beforePeriod: pt.beforeContext || '',
+    afterPeriod: pt.afterContext || '',
+    significance: pt.significance ?? 0.85,
+    evidenceMessageIds: (pt.evidence || []).map(e => e.messageId).filter(Boolean),
+  }));
+
+  // Map patterns
+  const patterns = (investigatorResult.patterns || []).map((pat, idx) => ({
+    id: pat.id || `pattern_${idx + 1}`,
+    title: pat.pattern,
+    description: pat.explanation,
+    frequency: (pat.evidence || []).length || 1,
+    importance: pat.confidence ?? 0.85,
+    evidenceMessageIds: (pat.evidence || []).map(e => e.messageId).filter(Boolean),
+  }));
+
+  return {
+    overview: {
+      dominantThemes,
+      overallTone,
+      potentialStoryArcs,
+      recurringJokes,
+    },
+    eras,
+    characters,
+    lore,
+    plotTwists,
+    patterns,
+    // Phase 3 V2 additions
+    _investigatorResult: investigatorResult,
+    _evidenceStore: evidenceStore,
+    _meta: extractionMeta,
+  };
+}
+
+/**
+ * Fallback generator when investigator call encounters non-fatal errors.
+ */
+function buildFallbackInvestigatorResult(metadata, compactMemory, evidenceStore = []) {
+  const fallbackReceipts = evidenceStore.slice(0, 8).map(ev => ({
+    reason: ev.connection || `Key moment (${ev.type})`,
+    messageId: ev.messageId,
+    importance: ev.importance || 0.85,
+    timestamp: ev.timestamp || '',
+    exactText: ev.text || '',
+    sender: ev.sender || '',
+  }));
+
+  return {
+    eras: (compactMemory.periods || []).map((p, i) => ({
+      id: `era_${i + 1}`,
+      title: `Period ${i + 1}`,
+      startDate: p.dateRange?.split('→')?.[0]?.trim() || '',
+      endDate: p.dateRange?.split('→')?.[1]?.trim() || '',
+      summary: `Conversation dynamic during ${p.dateRange}`,
+      dominantTopics: p.topics || [],
+      tone: 'conversational',
+      majorChanges: [],
+      evidence: [],
+    })),
+    participantProfiles: (metadata.participants || []).map(name => ({
+      participant: name,
+      selfImage: [],
+      observedBehavior: [],
+      recurringHabits: [],
+      communicationStyle: 'Conversational',
+    })),
+    patterns: [],
+    contradictions: [],
+    callbacks: [],
+    foreshadowing: [],
+    lore: (compactMemory.recurringThemes || []).slice(0, 5).map(theme => ({
+      name: theme,
+      origin: 'Recurring conversation topic',
+      howItEvolved: 'Discussed repeatedly',
+      evidence: [],
+    })),
+    funnyMoments: [],
+    turningPoints: [],
+    plotTwists: [],
+    receiptCandidates: fallbackReceipts,
+    unresolvedThreads: [],
+    storyInsights: [],
+    overarchingStory: {
+      opening: 'The conversation began.',
+      development: 'The participants exchanged messages over time.',
+      escalation: 'Discussions covered various themes and moments.',
+      majorTurn: 'The dynamic evolved.',
+      currentState: 'Active conversation.',
+      overallDynamic: 'Conversational',
+      keyThemes: (compactMemory.globalTopics || []).map(t => typeof t === 'string' ? t : String(t?.description || 'Topic')),
+    },
+    keyThemes: (compactMemory.globalTopics || []).map(t => typeof t === 'string' ? t : String(t?.description || 'Topic')),
+  };
 }

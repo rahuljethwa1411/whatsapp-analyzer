@@ -1,166 +1,250 @@
 /**
- * Token-Budget & Count-Bounded Chunker
+ * Token-Aware Extraction Chunker — Phase 1 Fix
  *
- * Groups messages into AnalysisChunks respecting session boundaries,
- * token budgets (~2500 tokens max), and message count limits (120 msgs max).
+ * Creates AnalysisChunks that are guaranteed to be within the extraction
+ * token budget BEFORE any API call. This eliminates the old
+ * "chunk too large → split → retry" pattern.
  *
- * For mega chats (25k-50k+ messages), evenly samples up to MAX_EXTRACTION_CHUNKS (20)
- * across the entire timeline to ensure analysis completes in under 20 seconds
- * without exceeding Groq TPM limits.
+ * Algorithm:
+ *   For every message (in chronological order):
+ *     Estimate its formatted extraction-prompt token cost.
+ *     If adding it would push the current chunk over MAX_MESSAGE_PAYLOAD_TOKENS
+ *     or MAX_MESSAGES_PER_CHUNK → finalize the current chunk, start a new one.
+ *
+ * Key guarantees:
+ *   ✓ Every chunk's raw-message token count ≤ MAX_MESSAGE_PAYLOAD_TOKENS
+ *   ✓ Full formatted user prompt ≤ MAX_EXTRACTION_INPUT_TOKENS (with overhead)
+ *   ✓ Messages are never reordered or silently dropped
+ *   ✓ Oversized individual messages are truncated before packing
+ *   ✓ No sampleEvenly downsampling — all messages are covered
+ *   ✓ Pre-flight validation gate before each API call
  */
 
 import {
   estimateChunkPayloadTokens,
+  estimateMessageTokens,
   truncateMessageIfOversized,
   MAX_EXTRACTION_INPUT_TOKENS,
+  MAX_MESSAGE_PAYLOAD_TOKENS,
   MAX_MESSAGES_PER_CHUNK,
   MAX_EXTRACTION_CHUNKS,
+  estimateExtractionRequest,
 } from './tokenEstimator.js';
+import { buildExtractionRequest } from './ai/extractionRequest.js';
 
 const SESSION_GAP_MS = 2 * 60 * 60 * 1000; // 2 hours
 
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 /**
- * @param {Array} sessions      — ConversationSession[] from Phase 2
- * @param {Array} allMessages   — ChatMessage[] (all message types)
+ * Creates token-safe AnalysisChunks from a flat message list.
+ *
+ * Unlike the old chunker, this version:
+ *   - Never calls sampleEvenly (no message discarding)
+ *   - Uses MAX_MESSAGE_PAYLOAD_TOKENS (not MAX_EXTRACTION_INPUT_TOKENS) as the
+ *     raw-message budget, reserving PROMPT_OVERHEAD_TOKENS for framing
+ *   - Logs telemetry for every chunk and a summary at the end
+ *
+ * @param {Array} _sessions     — ConversationSession[] (unused, kept for API compat)
+ * @param {Array} allMessages   — ChatMessage[] (all message types, including media/system)
  * @param {Object} [config]
+ * @param {number} [config.maxTokensPerChunk] — override MAX_MESSAGE_PAYLOAD_TOKENS
+ * @param {number} [config.maxMessagesPerChunk] — override MAX_MESSAGES_PER_CHUNK
  * @returns {Array} AnalysisChunk[]
  */
-export function createChunks(sessions, allMessages, config = {}) {
-  const maxTokens = config.maxTokensPerChunk
-    ?? parseInt(process.env.MAX_EXTRACTION_INPUT_TOKENS || '2500', 10);
-  const maxMsgs = config.maxMessagesPerChunk || MAX_MESSAGES_PER_CHUNK;
-  const maxChunksCap = config.maxChunks || MAX_EXTRACTION_CHUNKS;
+export function createChunks(_sessions, allMessages, config = {}) {
+  // Effective per-chunk raw-message token budget.
+  // We intentionally use MAX_MESSAGE_PAYLOAD_TOKENS (= MAX_EXTRACTION_INPUT_TOKENS
+  // minus PROMPT_OVERHEAD_TOKENS) so the full formatted user prompt stays under limit.
+  const msgTokenBudget = config.maxTokensPerChunk ?? MAX_MESSAGE_PAYLOAD_TOKENS;
+  const maxMsgs       = config.maxMessagesPerChunk ?? MAX_MESSAGES_PER_CHUNK;
+  const totalChunksForSizing = config.totalChunksForSizing ?? 999999;
 
-  // ── 1. Filter + sort normal messages only ───────────────────────────────────
+  // ── 1. Filter to normal text messages, sorted chronologically ──────────────
   const normalMessages = allMessages
     .filter(m => m.type === 'message' && m.text && m.text.trim().length > 0)
     .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-  if (normalMessages.length === 0) return [];
-
-  // ── 2. Re-group into sessions by 2h gap ────────────────────────────────────
-  const sessionGroups = [];
-  let currentGroup = [normalMessages[0]];
-
-  for (let i = 1; i < normalMessages.length; i++) {
-    const prev = normalMessages[i - 1];
-    const curr = normalMessages[i];
-    const gap = new Date(curr.timestamp) - new Date(prev.timestamp);
-    if (gap <= SESSION_GAP_MS) {
-      currentGroup.push(curr);
-    } else {
-      sessionGroups.push(currentGroup);
-      currentGroup = [curr];
-    }
+  if (normalMessages.length === 0) {
+    console.log('[Chunker] No normal messages found — returning empty chunk list.');
+    return [];
   }
-  if (currentGroup.length > 0) sessionGroups.push(currentGroup);
 
-  // ── 3. Pack sessions into token- & count-budgeted chunks ───────────────────
-  const allRawChunks = [];
-  let currentChunkMessages = [];
-  let currentChunkTokens = 0;
-  let currentSessionIds = [];
-  let chunkIndex = 0;
+  // ── 2. Build session groups (2h gap = new session) ─────────────────────────
+  //    We still respect session boundaries so related bursts stay together.
+  const sessionGroups = buildSessionGroups(normalMessages);
 
-  const finalizeChunk = () => {
-    if (currentChunkMessages.length === 0) return;
-    allRawChunks.push(buildChunk(chunkIndex, currentSessionIds, currentChunkMessages));
-    chunkIndex++;
-    currentChunkMessages = [];
-    currentChunkTokens = 0;
-    currentSessionIds = [];
-  };
+  // ── 3. Token-aware packing: iterate messages, finalize on budget overflow ──
+  const chunks = [];
+  let current = newAccumulator();
+  let oversizedCount = 0;
 
   for (let si = 0; si < sessionGroups.length; si++) {
-    const sg = sessionGroups[si];
     const sessionId = `session_${si + 1}`;
-    const sessionTokens = estimateChunkPayloadTokens(sg);
 
-    const fitsInCurrent =
-      currentChunkMessages.length + sg.length <= maxMsgs &&
-      currentChunkTokens + sessionTokens <= maxTokens;
+    for (const rawMsg of sessionGroups[si]) {
+      // Truncate any individual message that is itself over the single-message limit
+      const msg = truncateMessageIfOversized(rawMsg);
+      const msgTokens = estimateMessageTokens(msg);
 
-    if (fitsInCurrent) {
-      currentChunkMessages.push(...sg);
-      currentChunkTokens += sessionTokens;
-      currentSessionIds.push(sessionId);
-    } else if (sessionTokens <= maxTokens && sg.length <= maxMsgs) {
-      // Session fits in its own chunk — flush current first
-      finalizeChunk();
-      currentChunkMessages.push(...sg);
-      currentChunkTokens += sessionTokens;
-      currentSessionIds.push(sessionId);
-    } else {
-      // Oversized session — split message by message
-      if (currentChunkMessages.length > 0) finalizeChunk();
-
-      for (const rawMsg of sg) {
-        const msg = truncateMessageIfOversized(rawMsg);
-        const msgTokens = estimateChunkPayloadTokens([msg]);
-
-        if (
-          currentChunkMessages.length > 0 &&
-          (currentChunkMessages.length >= maxMsgs ||
-            currentChunkTokens + msgTokens > maxTokens)
-        ) {
-          finalizeChunk();
+      // Edge case: single message exceeds the entire chunk budget.
+      // Place it alone in its own chunk (logged below as oversized).
+      if (msgTokens > msgTokenBudget) {
+        if (current.messages.length > 0) {
+          chunks.push(finalizeChunk(chunks.length, current));
+          current = newAccumulator();
         }
-
-        currentChunkMessages.push(msg);
-        currentChunkTokens += msgTokens;
-        if (!currentSessionIds.includes(sessionId)) {
-          currentSessionIds.push(sessionId);
-        }
+        oversizedCount++;
+        console.warn(
+          `[Chunker] Single message ${msg.id} exceeds payload budget ` +
+          `(~${msgTokens} tokens > ${msgTokenBudget}). Placed in isolated chunk.`
+        );
+        // Add it alone; it is already truncated as much as possible
+        current.messages.push(msg);
+        current.tokens += msgTokens;
+        addSession(current, sessionId);
+        // Immediately finalize so it stands alone
+        chunks.push(finalizeChunk(chunks.length, current));
+        current = newAccumulator();
+        continue;
       }
+
+      // Normal case: check if adding this message would exceed the budget
+      const candidate = {
+        ...finalizeChunk(chunks.length, {
+          messages: [...current.messages, msg],
+          sessionIds: current.sessionIds.includes(sessionId)
+            ? current.sessionIds
+            : [...current.sessionIds, sessionId],
+        }),
+      };
+      const candidateRequest = buildExtractionRequest(
+        candidate,
+        chunks.length,
+        totalChunksForSizing
+      );
+      const tokenInfo = estimateExtractionRequest(candidateRequest);
+      const wouldExceedTokens = !tokenInfo.safe || current.tokens + msgTokens > msgTokenBudget;
+      const wouldExceedCount  = current.messages.length >= maxMsgs;
+
+      if (current.messages.length > 0 && (wouldExceedTokens || wouldExceedCount)) {
+        chunks.push(finalizeChunk(chunks.length, current));
+        current = newAccumulator();
+      }
+
+      current.messages.push(msg);
+      current.tokens += msgTokens;
+      addSession(current, sessionId);
     }
   }
 
-  finalizeChunk();
-
-  // ── 4. If more chunks than cap, sample representative chunks ──────────────
-  if (allRawChunks.length <= maxChunksCap) {
-    return allRawChunks;
+  // Flush any remaining messages
+  if (current.messages.length > 0) {
+    chunks.push(finalizeChunk(chunks.length, current));
   }
 
+  // ── 4. Telemetry: log every chunk ──────────────────────────────────────────
+  for (const chunk of chunks) {
+    const firstId = chunk.messages[0]?.id ?? '?';
+    const lastId  = chunk.messages[chunk.messages.length - 1]?.id ?? '?';
+    const estTokens = estimateChunkPayloadTokens(chunk.messages);
+    console.log(
+      `[Chunker] ${chunk.id} | ${chunk.messages.length} msgs | ` +
+      `~${estTokens} msg tokens (~${estTokens + 600} total) | ` +
+      `${firstId} → ${lastId}`
+    );
+  }
+
+  // ── 5. Summary log ─────────────────────────────────────────────────────────
+  const totalMsgs = chunks.reduce((s, c) => s + c.messages.length, 0);
   console.log(
-    `[Chunker] Chat produced ${allRawChunks.length} chunks. Sampling ${maxChunksCap} representative timeline chunks.`
+    `\n[Chunker] ═══════════════════════════════════════\n` +
+    `[Chunker] Created ${chunks.length} extraction chunks\n` +
+    `[Chunker] Total messages: ${totalMsgs}\n` +
+    `[Chunker] Oversized single-message chunks: ${oversizedCount}\n` +
+    `[Chunker] Msg token budget per chunk: ${msgTokenBudget}\n` +
+    `[Chunker] Full prompt budget per chunk: ${MAX_EXTRACTION_INPUT_TOKENS}\n` +
+    `[Chunker] ═══════════════════════════════════════\n`
   );
-  return sampleEvenly(allRawChunks, maxChunksCap);
+
+  if (chunks.length > MAX_EXTRACTION_CHUNKS) {
+    console.warn(
+      `[Chunker] ⚠️  ${chunks.length} chunks exceeds the soft cap of ${MAX_EXTRACTION_CHUNKS}. ` +
+      `This is expected for very large chats. All chunks will be processed.`
+    );
+  }
+
+  return chunks;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+/**
+ * Pre-flight validation: checks that a chunk's estimated prompt tokens are
+ * within budget BEFORE sending to the API.
+ *
+ * @param {Object} chunk        — AnalysisChunk
+ * @param {number} [budget]     — token limit (defaults to MAX_EXTRACTION_INPUT_TOKENS)
+ * @returns {{ ok: boolean, estimated: number, budget: number }}
+ */
+export function validateChunkTokenBudget(chunk, budget = MAX_EXTRACTION_INPUT_TOKENS) {
+  const request = buildExtractionRequest(chunk, 0, 999999);
+  const tokenInfo = estimateExtractionRequest(request);
+  const msgTokens = estimateChunkPayloadTokens(chunk.messages);
+  return {
+    ok: tokenInfo.estimatedInputTokens <= Math.min(budget, tokenInfo.safeBudget),
+    estimated: tokenInfo.estimatedInputTokens,
+    budget,
+    msgTokens,
+    requestChars: tokenInfo.totalSerializedRequestChars,
+  };
+}
 
-function buildChunk(index, sessionIds, messages) {
-  const sorted = [...messages].sort(
+// ─── Private Helpers ─────────────────────────────────────────────────────────
+
+function buildSessionGroups(sortedMessages) {
+  const groups = [];
+  let group = [sortedMessages[0]];
+
+  for (let i = 1; i < sortedMessages.length; i++) {
+    const gap = new Date(sortedMessages[i].timestamp) - new Date(sortedMessages[i - 1].timestamp);
+    if (gap <= SESSION_GAP_MS) {
+      group.push(sortedMessages[i]);
+    } else {
+      groups.push(group);
+      group = [sortedMessages[i]];
+    }
+  }
+  if (group.length > 0) groups.push(group);
+  return groups;
+}
+
+function newAccumulator() {
+  return { messages: [], tokens: 0, sessionIds: [] };
+}
+
+function addSession(acc, sessionId) {
+  if (!acc.sessionIds.includes(sessionId)) {
+    acc.sessionIds.push(sessionId);
+  }
+}
+
+function finalizeChunk(index, acc) {
+  const sorted = [...acc.messages].sort(
     (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
   );
-  const participants = [
-    ...new Set(sorted.map(m => m.sender).filter(Boolean)),
-  ];
+  const participants = [...new Set(sorted.map(m => m.sender).filter(Boolean))];
 
   return {
     id: `chunk_${index + 1}`,
     startAt: sorted[0]?.timestamp?.toString() || '',
-    endAt: sorted[sorted.length - 1]?.timestamp?.toString() || '',
-    sessionIds,
+    endAt:   sorted[sorted.length - 1]?.timestamp?.toString() || '',
+    sessionIds: acc.sessionIds,
     participants,
     messages: sorted.map(m => ({
-      id: m.id,
+      id:        m.id,
       timestamp: m.timestamp?.toString() || '',
-      sender: m.sender,
-      text: m.text,
-      type: m.type,
+      sender:    m.sender,
+      text:      m.text,
+      type:      m.type,
     })),
   };
-}
-
-function sampleEvenly(arr, count) {
-  if (arr.length <= count) return arr;
-  const result = [arr[0]];
-  const step = (arr.length - 1) / (count - 1);
-  for (let i = 1; i < count - 1; i++) {
-    result.push(arr[Math.round(i * step)]);
-  }
-  result.push(arr[arr.length - 1]);
-  return result.map((c, i) => ({ ...c, id: `chunk_${i + 1}` }));
 }

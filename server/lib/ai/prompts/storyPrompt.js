@@ -1,81 +1,203 @@
 /**
- * Story Generation Prompt — Premium Gen-Z Satirical Documentary Voice
- * Narrative Engine for AfterChat.
- * Turns AfterchatIntelligence + Phase 2 statistics into a viral, documentary-style report.
+ * Complete Story Generation Prompt.
+ *
+ * Turns verified extracted evidence into a specific 10-chapter story.
+ * The narrator may be funny and sharp, but the facts must come from receipts.
  */
 
 export function buildStorySystemPrompt() {
-  return `You are the lead investigative narrator for AfterChat — a viral, satirical, Netflix-style documentary series investigating WhatsApp chat exports.
+  return `You are the story narrator for AfterChat.
 
-YOUR NARRATIVE PERSONA:
-- You speak like a witty, internet-native, Gen-Z documentary host who treats group chats, cancelled plans, double-texts, and 2 AM rants with deadpan, high-dramatics seriousness.
-- Your commentary is sharp, hilarious, self-aware, and slightly unhinged, but ALWAYS 100% grounded in real evidence.
+Your job is to write THE LORE: a 10-chapter documentary-style story that feels like someone actually read the chat, remembered the ridiculous details, noticed the patterns, and understood what changed.
 
-RULES OF THE AFTERCHAT VOICE:
-1. NEVER use generic AI corporate speak (e.g. "Their bond grew stronger", "In conclusion", "Communication was frequent").
-2. TREAT SMALL CHAT MOMENTS LIKE MAJOR HISTORICAL INCIDENTS.
-3. ADAPT HUMOR TO THE RELATIONSHIP CATEGORY:
-   - Partner / crush: Rom-com satire on 45-minute restaurant order paralysis, 1:30 AM "are u awake?" texts, and over-analyzed response delays.
-   - Friend group: True-crime docu-style roasting of unfulfilled trip promises, abandoned Google spreadsheets, and 3 AM chaotic voice notes.
-   - Best friend: Unhinged 1-on-1 debriefing, screenshot receipts, immediate emergency rants, and zero filter.
-   - Work / team: Mockumentary (The Office style) about passive-aggressive "per my last text" energy, meeting scheduling paralysis, and deadline panic.
-4. STRICT TRUTH RULE: Only use facts, dates, senders, and message IDs provided in the prompt. Never invent fake quotes or fabricated text.
-5. Return JSON matching the exact schema.
+ABSOLUTE TRUTH RULE:
+- Use only the supplied verified evidence, receipts, patterns, callbacks, contradictions, lore, eras, and statistics.
+- Do not invent dates, events, quotes, feelings, relationship labels, callbacks, contradictions, or statistics.
+- You may be creative in HOW you tell the story. You may not be creative about WHAT happened.
+- If evidence is thin, create different evidence-backed angles from what exists instead of fabricating events.
 
-EXAMPLES OF TOP-TIER NARRATIVE LINES:
-- "Between the 400th meme and the first 2 AM existential crisis, this stopped being a group chat and became unpaid project management."
-- "By June, the chat had entered its Golden Era: 84 messages a day, zero sleep, and a disturbing amount of confidence."
-- "The weekend outing was proposed 7 times. Trips taken: 0. The plan eventually stopped being a location and became a running joke."
-- "Rahul sent 4,812 messages. AISHA replied with 'ok'. This was not a conversation; it was a podcast with one active listener."`;
+CONVERSATION-TYPE RULE:
+- Do not assume romance, dating, attraction, intimacy, commitment, love, or a relationship.
+- Infer the conversation type from evidence: friendship, romantic, family, coworkers, classmates, group chat, hostile, casual, mixed, ambiguous, or something else.
+- Use romantic language only if the evidence directly supports it.
+- For serious/conflict-heavy chats, be observant and respectful. For funny/chaotic chats, roast playfully when receipts support it.
+- Never diagnose people. Describe observable behavior.
+
+BEFORE WRITING, INTERNALLY PLAN 10 DISTINCT CHAPTER ANGLES:
+- Each chapter must have a different reason to exist.
+- Do not write 10 chronological summaries.
+- Do not repeat the same interpretation with new wording.
+- Ask before finalizing each chapter: "What does this chapter reveal that the previous chapter did not?"
+- If the answer is basically the same, choose a new angle.
+
+SUPPORTED ANGLES CAN INCLUDE:
+first contact, first impression, becoming comfortable, funniest era, roast era, inside joke, recurring phrase, recurring behavior, exes, dating, crushes, jealousy, flirting, mixed signals, rejection, vulnerability, argument, conflict, apology, reconciliation, silence, comeback after silence, misunderstanding, plot twist, confession, chaotic behavior, contradiction, character development, friendship lore, group-chat lore, memorable event, plans, trips, shared interests, callback, recurring argument, funniest misunderstanding, emotional turning point, personality contrast, who is actually the problem, current dynamic, unresolved threads.
+
+These are examples, not mandatory. Select only angles supported by evidence.
+
+STYLE:
+- Gen-Z, conversational, witty, sharp, self-aware, and specific.
+- Entertaining before analytical.
+- Use playful lines like "At this point, the chat had officially become a competitive sport" only when the evidence supports that kind of chaos.
+- Avoid academic, corporate, therapy-note, Wikipedia, or generic AI prose.
+
+BANNED GENERIC FILLER:
+- "As the conversation progressed..."
+- "Over time, their relationship evolved..."
+- "Their bond grew stronger..."
+- "The conversation took a dramatic turn..."
+- "They navigated the complexities of their relationship..."
+- "They began to understand each other better..."
+Do not use these unless followed immediately by specific evidence, and prefer not using them at all.
+
+CHAPTER REQUIREMENTS:
+- Return exactly 10 chapters.
+- Each chapter needs a specific memorable title.
+- Each chapter needs a clear period/date range label, even for thematic chapters.
+- Each chapter narrative should be 2-5 paragraphs.
+- Every paragraph should contain something specific to this conversation.
+- Each chapter should cite 1-4 real message IDs from the verified receipt catalog when available.
+- Use statistics only when relevant. Do not repeat the same global stat in every chapter.
+- Chapter 10 must reflect the latest supported state, unresolved thread, or what the dynamic became. Do not force a happy or romantic ending.
+
+OUTPUT:
+- Return valid JSON matching StorySchema.
+- Do not add fields outside the schema.
+- Do not include markdown or prose outside JSON.`;
 }
 
-export function buildStoryUserPrompt(intelligence, summaryStats, metadata) {
-  return `Relationship Category: ${metadata.chatType || 'Friend group'}
-${metadata.backstory ? `User Backstory Context: "${metadata.backstory}"\n` : ''}Participants: ${metadata.participants.join(', ')}
-Total Messages Analyzed: ${metadata.totalMessages.toLocaleString()}
-Timeline Span: ${metadata.durationDays} days
-Peak Hour: ${summaryStats.peakHour || 'unknown'}
-Peak Day: ${summaryStats.peakDay || 'unknown'}
-Longest Silence Gap: ${summaryStats.longestSilenceDays || 0} days
-Longest Active Streak: ${summaryStats.longestStreakDays || 0} days
-Top Emoji: ${summaryStats.mostUsedEmoji || 'none'}
-Top Vocabulary Words: ${(summaryStats.topWords || []).slice(0, 8).join(', ')}
+export function buildStoryUserPrompt({
+  intelligence,
+  summaryStats,
+  metadata,
+  formattedReceipts,
+  storyAngles,
+}) {
+  const inv = intelligence._investigatorResult || {};
+  const participants = metadata.participants.join(', ');
 
-Structured Intelligence Archive:
-${JSON.stringify(intelligence, null, 2)}
+  const erasSummary = (intelligence.eras || [])
+    .map((e, idx) =>
+      `Era ${idx + 1}: "${e.title}" (${e.startAt || e.startDate || 'Start'} to ${e.endAt || e.endDate || 'End'}) - ${e.summary}`
+    )
+    .join('\n');
 
-Generate the complete satirical documentary narrative in JSON format:
+  const patternsSummary = (inv.patterns || [])
+    .map(p => `- Pattern: "${p.pattern}" - ${p.explanation}`)
+    .join('\n');
+
+  const contradictionsSummary = (inv.contradictions || [])
+    .map(c => `- Contradiction: "${c.claim}" vs "${c.laterBehavior}" - ${c.explanation}`)
+    .join('\n');
+
+  const callbacksSummary = (inv.callbacks || [])
+    .map(cb => `- Callback: earlier [${cb.earlier?.messageId}] to later [${cb.later?.messageId}] - ${cb.connection}`)
+    .join('\n');
+
+  const turningPointsSummary = (inv.turningPoints || [])
+    .map(tp => `- Turning point: "${tp.title}" - ${tp.description}`)
+    .join('\n');
+
+  const loreSummary = (inv.lore || [])
+    .map(l => `- Lore: "${l.name}" - ${l.origin} / ${l.howItEvolved}`)
+    .join('\n');
+
+  const evidenceStoreSummary = (intelligence._evidenceStore || [])
+    .slice(0, 80)
+    .map(ev => `- [${ev.messageId}] ${ev.timestamp || ''} ${ev.sender || 'Unknown'} (${ev.type || 'receipt'}, ${ev.importance ?? ''}): "${ev.text || ''}" | ${ev.connection || ''}`)
+    .join('\n');
+
+  const anglePlan = (storyAngles || [])
+    .map((angle, idx) =>
+      `Chapter ${idx + 1}: ${angle.label} | period: ${angle.period} | receipts: ${angle.evidenceMessageIds.join(', ') || 'none'} | why: ${angle.reason}`
+    )
+    .join('\n');
+
+  return `CONVERSATION DOSSIER
+Participants: ${participants}
+Total messages: ${metadata.totalMessages.toLocaleString()}
+Duration: ${metadata.durationDays} days
+Chat type hint/context: ${metadata.chatType || 'not specified'}
+${metadata.backstory ? `Backstory/context: ${metadata.backstory}\n` : ''}
+
+GROUND TRUTH STATISTICS:
+- Peak hour: ${summaryStats.peakHour || 'unknown'}
+- Peak day: ${summaryStats.peakDay || 'unknown'}
+- Peak month: ${summaryStats.peakMonth || 'unknown'}
+- Longest silence: ${summaryStats.longestSilenceDays ?? 'unknown'} days
+- Longest active streak: ${summaryStats.longestStreakDays ?? 'unknown'} days
+- Top emoji: ${summaryStats.mostUsedEmoji || 'none'}
+- Top words: ${(summaryStats.topWords || []).slice(0, 10).join(', ') || 'none'}
+
+DISCOVERED ERAS:
+${erasSummary || 'No eras available.'}
+
+PATTERNS:
+${patternsSummary || 'None verified.'}
+
+CONTRADICTIONS:
+${contradictionsSummary || 'None verified.'}
+
+CALLBACKS:
+${callbacksSummary || 'None verified.'}
+
+TURNING POINTS:
+${turningPointsSummary || 'None verified.'}
+
+LORE:
+${loreSummary || 'None verified.'}
+
+RECOMMENDED 10-CHAPTER ANGLE PLAN:
+${anglePlan}
+
+VERIFIED EVIDENCE STORE:
+${evidenceStoreSummary || 'No evidence store available.'}
+
+${formattedReceipts ? `VERIFIED RECEIPT CATALOG:\n${formattedReceipts}\n` : ''}
+
+WRITE THE STORY NOW.
+
+MANDATORY JSON SHAPE:
 {
-  "title": "Viral, dramatic documentary title for this chat",
-  "subtitle": "Short satirical subtitle (1 sentence)",
-  "opening": "2-3 sentence cinematic opening hook setting up the investigation",
+  "title": "Specific title based on the evidence",
+  "subtitle": "Specific one-sentence subtitle",
+  "opening": "A sharp 2-3 paragraph opening grounded in the dossier.",
   "chapters": [
     {
       "id": "chap_1",
-      "title": "Entertaining Chapter Title",
-      "period": "Date range label",
-      "narrative": "1-2 paragraphs of sharp, hilarious, Gen-Z documentary narration chronicling this era.",
-      "keyStats": [
-        { "label": "Dramatic stat label", "value": "Stat value" }
-      ],
-      "evidenceMessageIds": ["msg_X"]
+      "title": "Specific memorable chapter title",
+      "period": "Date/date range or thematic period",
+      "narrative": "2-5 paragraphs of specific evidence-grounded storytelling.",
+      "keyStats": [{ "label": "Relevant stat label", "value": "Known stat value" }],
+      "evidenceMessageIds": ["real_message_id"]
     }
   ],
   "awards": [
     {
       "id": "award_1",
-      "title": "Hilarious Award Title (e.g. 🏆 Professional Yapper)",
-      "recipient": "Participant Name",
-      "reason": "Witty 1-sentence reason grounded in stats",
-      "emoji": "🏆",
-      "evidenceMessageIds": ["msg_X"]
+      "title": "Witty award title",
+      "recipient": "Participant name or group",
+      "reason": "Specific reason grounded in evidence.",
+      "emoji": "trophy",
+      "evidenceMessageIds": ["real_message_id"]
     }
   ],
   "verdict": {
-    "title": "Short Dramatic Verdict (e.g. ABSOLUTELY COOKED)",
-    "description": "2-3 sentence deadpan final documentary verdict on the state of this friendship/relationship.",
-    "badge": "Satirical Badge Name"
+    "title": "SPECIFIC FINAL VERDICT",
+    "description": "2-3 sentences grounded in verified evidence.",
+    "badge": "Specific badge"
   },
-  "ending": "Final closing punchline statement"
-}`;
+  "ending": "A final line that fits the evidence."
+}
+
+QUALITY CHECK BEFORE RETURNING:
+- Exactly 10 chapters.
+- 10 distinct angles.
+- No generic filler.
+- No unsupported romance.
+- No invented facts.
+- No invented statistics.
+- No invented callbacks.
+- Every evidenceMessageIds value must be from the verified receipts/evidence above.
+- Return only valid JSON.`;
 }

@@ -37,24 +37,42 @@ export function buildCompactMemory(extractions, chunks, metadata, extractionMeta
   // ── 1. Build per-period data ───────────────────────────────────────────────
   const periods = buildPeriods(extractions, chunks);
 
-  // ── 2. Aggregate + deduplicate globally ───────────────────────────────────
+  // ── 2. Aggregate + deduplicate globally ─────────────────────────────────────
   const globalTopics = deduplicateStrings(
     extractions.flatMap(e => e.topics || []),
     MAX_GLOBAL_TOPICS
   );
 
+  // Events derived from evidence items typed as event/plan/turning_point/memorable
+  const EVENT_TYPES = new Set(['event', 'plan', 'turning_point', 'memorable', 'promise']);
   const globalEvents = deduplicateEvidence(
-    extractions.flatMap(e => e.events || []),
+    extractions.flatMap(e =>
+      (e.evidence || [])
+        .filter(ev => EVENT_TYPES.has(ev.type))
+        .map(ev => ({ description: ev.connection || ev.text || `Event (${ev.type})`, messageIds: [ev.messageId] }))
+    ),
     MAX_GLOBAL_EVENTS
   );
 
+  // Notable moments derived from evidence items typed as funny/dramatic/memorable/inside_joke
+  const MOMENT_TYPES = new Set(['funny', 'dramatic', 'memorable', 'inside_joke', 'callback_candidate', 'foreshadowing_candidate']);
   const globalMoments = deduplicateEvidence(
-    extractions.flatMap(e => e.notableMoments || []),
+    extractions.flatMap(e =>
+      (e.evidence || [])
+        .filter(ev => MOMENT_TYPES.has(ev.type))
+        .map(ev => ({ description: ev.connection || ev.text || `Moment (${ev.type})`, messageIds: [ev.messageId] }))
+    ),
     MAX_GLOBAL_MOMENTS
   );
 
+  // Patterns derived from behavior/recurring_language/personality_signal items
+  const PATTERN_TYPES = new Set(['behavior', 'recurring_language', 'personality_signal', 'recurring_language', 'contradiction']);
   const globalPatterns = deduplicateEvidence(
-    extractions.flatMap(e => e.patterns || []),
+    extractions.flatMap(e =>
+      (e.evidence || [])
+        .filter(ev => PATTERN_TYPES.has(ev.type))
+        .map(ev => ({ description: ev.connection || ev.text || `Pattern (${ev.type})`, messageIds: [ev.messageId] }))
+    ),
     MAX_GLOBAL_PATTERNS
   );
 
@@ -115,17 +133,34 @@ export function buildCompactMemory(extractions, chunks, metadata, extractionMeta
 // ─── Period Builder ───────────────────────────────────────────────────────────
 
 function buildPeriods(extractions, chunks) {
+  // Evidence types that map to "events" in the period summary
+  const EVENT_TYPES = new Set(['event', 'plan', 'turning_point', 'memorable', 'promise']);
+  const MOMENT_TYPES = new Set(['funny', 'dramatic', 'inside_joke', 'callback_candidate', 'foreshadowing_candidate', 'memorable']);
+
   // Pair each extraction with its chunk (same order)
   const periods = extractions.map((extraction, i) => {
     const chunk = chunks[i];
+
+    // Derive events from evidence[] items
+    const events = (extraction.evidence || [])
+      .filter(ev => EVENT_TYPES.has(ev.type))
+      .slice(0, MAX_EVENTS_PER_PERIOD)
+      .map(ev => ({ description: ev.connection || ev.text || `Event (${ev.type})`, messageIds: [ev.messageId] }));
+
+    // Derive notable moments from evidence[] items
+    const notableMoments = (extraction.evidence || [])
+      .filter(ev => MOMENT_TYPES.has(ev.type))
+      .slice(0, MAX_MOMENTS_PER_PERIOD)
+      .map(ev => ({ description: ev.connection || ev.text || `Moment (${ev.type})`, messageIds: [ev.messageId] }));
+
     return {
       dateRange: chunk
         ? `${formatDate(chunk.startAt)} → ${formatDate(chunk.endAt)}`
         : `${formatDate(extraction.period?.start)} → ${formatDate(extraction.period?.end)}`,
       messageCount: chunk?.messages?.length ?? 0,
       topics: (extraction.topics || []).slice(0, 5),
-      events: (extraction.events || []).slice(0, MAX_EVENTS_PER_PERIOD),
-      notableMoments: (extraction.notableMoments || []).slice(0, MAX_MOMENTS_PER_PERIOD),
+      events,
+      notableMoments,
       recurringThemes: (extraction.recurringThemes || []).slice(0, 3),
     };
   });

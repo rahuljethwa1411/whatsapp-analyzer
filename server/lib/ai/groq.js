@@ -38,10 +38,11 @@ export class InvalidApiKeyError extends Error {
  * DO NOT retry the same payload — split the chunk instead.
  */
 export class RequestTooLargeError extends Error {
-  constructor(message) {
+  constructor(message, options = {}) {
     super(message);
     this.name = 'RequestTooLargeError';
     this.code = 'REQUEST_TOO_LARGE';
+    this.telemetryRecorded = Boolean(options.telemetryRecorded);
   }
 }
 
@@ -57,6 +58,9 @@ const telemetry = {
   failedRequests: 0,
   rateLimitHits: 0,
   requestTooLargeHits: 0,
+  recoverySplits: 0,
+  schemaNormalizationEvents: 0,
+  unknownEvidenceTypesNormalized: 0,
 };
 
 export function getTokenTelemetry() {
@@ -65,6 +69,21 @@ export function getTokenTelemetry() {
 
 export function resetTokenTelemetry() {
   Object.keys(telemetry).forEach(k => (telemetry[k] = 0));
+}
+
+// A recovery retry is always a smaller payload, never a repeated oversized one.
+export function recordExtractionRecoverySplit() {
+  telemetry.recoverySplits++;
+  telemetry.totalRetries++;
+}
+
+export function recordExtractionSizeLimitHit() {
+  telemetry.requestTooLargeHits++;
+}
+
+export function recordExtractionSchemaNormalization(count = 1) {
+  telemetry.schemaNormalizationEvents++;
+  telemetry.unknownEvidenceTypesNormalized += count;
 }
 
 // ─── GroqProvider ─────────────────────────────────────────────────────────────
@@ -123,22 +142,31 @@ export class GroqProvider extends AIProvider {
     }
 
     const maxTokens = maxOutputTokens ?? 4096;
+    return this.completeRequest({
+      request: {
+        model: useModel,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: tier === 'extraction' ? 0.1 : 0.3,
+        max_tokens: maxTokens,
+        response_format: { type: 'json_object' },
+      },
+      schema,
+      tier,
+    });
+  }
+
+  async completeRequest({ request, schema, tier }) {
+    const useModel = request.model;
     let lastError = null;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       telemetry.totalRequests++;
 
       try {
-        const response = await this.groq.chat.completions.create({
-          model: useModel,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-          temperature: tier === 'extraction' ? 0.1 : 0.3,
-          max_tokens: maxTokens,
-          response_format: { type: 'json_object' },
-        });
+        const response = await this.groq.chat.completions.create(request);
 
         // ── Record actual token usage from response ───────────────────────
         const usage = response.usage;
@@ -178,6 +206,7 @@ export class GroqProvider extends AIProvider {
         lastError = err;
         const status = err?.status ?? err?.error?.status;
         const errMsg = err?.message ?? '';
+        logGroqErrorDebug(err, request, tier);
 
         // ── Classify error ────────────────────────────────────────────────
 
@@ -210,17 +239,30 @@ export class GroqProvider extends AIProvider {
           );
         }
 
-        // Request too large (413 or TPM error caused by payload size)
-        if (
+        // Genuine request/context size errors only. TPM/rate-limit errors are
+        // handled below and should not trigger recursive extraction splitting.
+        const normalizedError = errMsg.toLowerCase();
+        const errorCode = String(err?.code ?? err?.error?.code ?? '').toLowerCase();
+        const errorType = String(err?.type ?? err?.error?.type ?? '').toLowerCase();
+        const isGenuineRequestSizeError =
           status === 413 ||
-          errMsg.includes('Request too large') ||
-          errMsg.includes('request too large') ||
-          (status === 429 && errMsg.includes('Requested') && errMsg.includes('Limit'))
-        ) {
+          errorCode.includes('context_length') ||
+          errorCode.includes('request_too_large') ||
+          errorType.includes('context_length') ||
+          errorType.includes('request_too_large') ||
+          normalizedError.includes('request too large') ||
+          normalizedError.includes('input too large') ||
+          normalizedError.includes('maximum context') ||
+          normalizedError.includes('context window') ||
+          normalizedError.includes('context length exceeded') ||
+          normalizedError.includes('maximum input');
+
+        if (isGenuineRequestSizeError) {
           telemetry.failedRequests++;
           telemetry.requestTooLargeHits++;
           throw new RequestTooLargeError(
-            `Groq request payload too large for model ${useModel}: ${errMsg.slice(0, 200)}`
+            `Groq request payload too large for model ${useModel}: ${errMsg.slice(0, 200)}`,
+            { telemetryRecorded: true }
           );
         }
 
@@ -280,4 +322,21 @@ export class GroqProvider extends AIProvider {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function logGroqErrorDebug(err, request, tier) {
+  if (process.env.TOKEN_ESTIMATOR_DEBUG !== '1') return;
+  const status = err?.status ?? err?.error?.status ?? '';
+  const code = err?.code ?? err?.error?.code ?? '';
+  const type = err?.type ?? err?.error?.type ?? '';
+  const message = String(err?.message ?? '').slice(0, 500);
+  console.warn(
+    '[Groq Error Debug]\n' +
+    `tier: ${tier || ''}\n` +
+    `model: ${request?.model || ''}\n` +
+    `http_status: ${status}\n` +
+    `error_code: ${code}\n` +
+    `error_type: ${type}\n` +
+    `error_message: ${message}`
+  );
 }

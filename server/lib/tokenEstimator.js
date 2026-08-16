@@ -2,11 +2,8 @@
  * Token Estimator
  *
  * Conservative character-based token estimation for WhatsApp messages.
- * Real tokenizers are model-specific and not available client-side or in plain Node ESM.
- * We use ~3.5 chars/token for Latin text and ~1.5 chars/token for emoji/CJK/unicode.
- *
- * Target: stay comfortably under Groq TPM limits.
- * Always underestimate token count (i.e. our estimate should be >= real count).
+ * Real tokenizers are model-specific and not available in plain Node ESM.
+ * We use ~3.8 chars/token for ASCII text and ~1.5 chars/token for emoji/CJK/unicode.
  *
  * Budget constants — ALL other modules must import from here.
  */
@@ -14,28 +11,60 @@
 // ─── Budget Constants ────────────────────────────────────────────────────────
 
 /**
- * Maximum input tokens per extraction request.
- * This is the token budget for the USER PROMPT (raw messages) only.
- * System prompt + output overhead adds ~2000–3000 tokens on top.
- * Total request will be safely below 8k, far under the 12k TPM limit.
+ * Estimated token overhead of all non-message framing inside the extraction
+ * user prompt (header, separators, example block, footer rules).
+ *
+ * The extraction user prompt looks like:
+ *   CHUNK N OF M\nPeriod: ...\nParticipants: ...\n   → ~50  tokens
+ *   ═══ separator × 3                                → ~30  tokens
+ *   Example block (ID, sender, JSON example)         → ~120 tokens
+ *   Footer CRITICAL RULES block                      → ~80  tokens
+ *   ──────────────────────────────────────────────────────────────
+ *   Total overhead                                   ~280–350 tokens
+ *
+ * We use 600 as a conservative (generous) buffer so every chunk's full
+ * formatted user prompt stays safely under MAX_EXTRACTION_INPUT_TOKENS.
+ */
+export const PROMPT_OVERHEAD_TOKENS = 600;
+
+/**
+ * Maximum tokens for the FULL extraction user prompt
+ * (raw message block + all prompt framing).
+ *
+ * Set to 4000. With the system prompt (~250 tokens) and output (1200 tokens),
+ * the total Groq request stays ~5450 tokens — well within the model's 8192
+ * context window and the 6000 TPM rate limit.
+ *
+ * Override with MAX_EXTRACTION_INPUT_TOKENS env var.
  */
 export const MAX_EXTRACTION_INPUT_TOKENS = parseInt(
-  process.env.MAX_EXTRACTION_INPUT_TOKENS || '2500',
+  process.env.MAX_EXTRACTION_INPUT_TOKENS || '4000',
   10
 );
 
 /**
- * Maximum message count per chunk.
- * Guarantees chunk payloads stay small and never trigger 413 / Request Too Large.
+ * Effective token budget for the RAW MESSAGE BLOCK only inside one chunk.
+ * = MAX_EXTRACTION_INPUT_TOKENS - PROMPT_OVERHEAD_TOKENS
+ *
+ * The chunker uses this number when packing messages so that the full
+ * formatted prompt never exceeds MAX_EXTRACTION_INPUT_TOKENS.
+ */
+export const MAX_MESSAGE_PAYLOAD_TOKENS =
+  MAX_EXTRACTION_INPUT_TOKENS - PROMPT_OVERHEAD_TOKENS;
+
+/**
+ * Hard maximum message count per chunk.
+ * Prevents any single chunk from being unreasonably large even if
+ * individual messages are very short.
  */
 export const MAX_MESSAGES_PER_CHUNK = 120;
 
 /**
  * Maximum total extraction chunks allowed per chat analysis.
- * For massive chats (25k-50k+ messages), representative timeline sampling
- * ensures analysis completes in <25 seconds without hitting Groq TPM limits.
+ * This is now a WARNING threshold only — NOT a hard downsampling cap.
+ * Messages are never discarded to meet this limit.
  */
-export const MAX_EXTRACTION_CHUNKS = 20;
+export const MAX_EXTRACTION_CHUNKS = 60;
 
 /**
  * If a single message exceeds this many tokens it gets truncated.
@@ -48,6 +77,10 @@ export const MAX_SINGLE_MESSAGE_TOKENS = 500;
  * Synthesis system prompt + output add ~3k–5k on top.
  */
 export const MAX_MEMORY_TOKENS = 12000;
+export const EXTRACTION_INPUT_SAFETY_RATIO = 0.82;
+export const SAFE_EXTRACTION_INPUT_TOKENS = Math.floor(
+  MAX_EXTRACTION_INPUT_TOKENS * EXTRACTION_INPUT_SAFETY_RATIO
+);
 
 // ─── Core Estimator ──────────────────────────────────────────────────────────
 
@@ -83,24 +116,27 @@ export function estimateTokens(text) {
 }
 
 /**
- * Estimates the token count of a minimal message payload
- * as it would appear in the extraction prompt:
- *   "[msg_123] Sender: text content here"
+ * Estimates the token count of a single message as it appears in the
+ * extraction user prompt:
+ *   "[msg_123] [2024-08-12T22:42:00.000Z] Sender: text\n"
  *
- * @param {{ id: string, sender: string|null, text: string }} msg
+ * The timestamp is included because buildChunkExtractionUserPrompt
+ * formats messages as: [id] [timestamp] sender: text
+ *
+ * @param {{ id: string, sender: string|null, timestamp?: string, text: string }} msg
  * @returns {number}
  */
 export function estimateMessageTokens(msg) {
-  // Format: "[id] sender: text\n"
-  const line = `[${msg.id}] ${msg.sender || 'Unknown'}: ${msg.text || ''}\n`;
+  const line = `[${msg.id}] [${msg.timestamp || ''}] ${msg.sender || 'Unknown'}: ${msg.text || ''}\n`;
   return estimateTokens(line);
 }
 
 /**
- * Estimates the total token count of an array of messages
- * as they would appear in the extraction user prompt.
+ * Estimates the total raw-message token count of an array of messages
+ * as they would appear in the extraction user prompt (message block only,
+ * does not include prompt overhead framing).
  *
- * @param {Array<{ id: string, sender: string|null, text: string }>} messages
+ * @param {Array<{ id: string, sender: string|null, timestamp?: string, text: string }>} messages
  * @returns {number}
  */
 export function estimateChunkPayloadTokens(messages) {
@@ -115,8 +151,8 @@ export function estimateChunkPayloadTokens(messages) {
  * Truncates a message's text to fit within MAX_SINGLE_MESSAGE_TOKENS.
  * Returns a new message object; never mutates the original.
  *
- * @param {{ id: string, sender: string|null, text: string, [key: string]: any }} msg
- * @returns {{ id: string, sender: string|null, text: string, [key: string]: any }}
+ * @param {{ id: string, sender: string|null, timestamp?: string, text: string, [key: string]: any }} msg
+ * @returns {{ id: string, sender: string|null, timestamp?: string, text: string, [key: string]: any }}
  */
 export function truncateMessageIfOversized(msg) {
   if (estimateMessageTokens(msg) <= MAX_SINGLE_MESSAGE_TOKENS) return msg;
@@ -150,4 +186,46 @@ export function estimateObjectTokens(obj) {
   } catch {
     return 0;
   }
+}
+
+export function estimateExtractionRequest(request) {
+  const serializedRequest = JSON.stringify(request);
+  const messages = Array.isArray(request?.messages) ? request.messages : [];
+
+  let conversationalTokens = 0;
+  for (const message of messages) {
+    conversationalTokens += estimateTokens(String(message?.role || ''));
+    conversationalTokens += estimateTokens(String(message?.content || ''));
+    // ChatML-like framing overhead. Groq's exact tokenizer is not available
+    // locally, so this is a documented conservative allowance per message.
+    conversationalTokens += 8;
+  }
+
+  const tokenRelevantRequest = {
+    ...request,
+    messages: messages.map(message => ({
+      role: message?.role || '',
+      content: '',
+    })),
+  };
+  const structuralTokens = estimateTokens(JSON.stringify(tokenRelevantRequest));
+  const escapingOverheadTokens = Math.ceil(
+    Math.max(0, serializedRequest.length - messages.reduce(
+      (sum, message) => sum + String(message?.content || '').length,
+      0
+    )) / 4
+  );
+
+  const estimatedInputTokens = Math.ceil(
+    (conversationalTokens + structuralTokens + escapingOverheadTokens) * 1.18
+  );
+
+  return {
+    estimatedInputTokens,
+    safeBudget: SAFE_EXTRACTION_INPUT_TOKENS,
+    maxInputTokens: MAX_EXTRACTION_INPUT_TOKENS,
+    safe: estimatedInputTokens <= SAFE_EXTRACTION_INPUT_TOKENS,
+    totalSerializedRequestChars: serializedRequest.length,
+    messageCount: messages.length,
+  };
 }

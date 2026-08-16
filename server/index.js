@@ -113,11 +113,11 @@ app.post('/api/analyze', async (req, res) => {
   }
 });
 
-// ─── Phase 4 AI Story Generation ──────────────────────────────────────────
+// ─── Phase 4 AI Story Generation (Story Writer V2 — 10 Chapters) ───────────
 app.post('/api/story', async (req, res) => {
-  const { GenerateStoryRequestSchema, StorySchema } = await import('./lib/ai/schemas/index.js');
-  const { GroqProvider } = await import('./lib/ai/groq.js');
-  const { buildStorySystemPrompt, buildStoryUserPrompt } = await import('./lib/ai/prompts/storyPrompt.js');
+  const { GenerateStoryRequestSchema } = await import('./lib/ai/schemas/index.js');
+  const { generateCompleteStory } = await import('./lib/storyGenerator.js');
+  const { DailyLimitError, InvalidApiKeyError } = await import('./lib/ai/groq.js');
 
   const parseResult = GenerateStoryRequestSchema.safeParse(req.body);
   if (!parseResult.success) {
@@ -138,17 +138,16 @@ app.post('/api/story', async (req, res) => {
   }
 
   try {
-    const provider = new GroqProvider();
-    const story = await provider.complete({
-      systemPrompt: buildStorySystemPrompt(),
-      userPrompt: buildStoryUserPrompt(intelligence, summaryStats, metadata),
-      schema: StorySchema,
-      tier: 'synthesis', // Always use the strong model for story generation
+    const { story, receipts } = await generateCompleteStory({
+      intelligence,
+      summaryStats,
+      metadata,
     });
 
     return res.json({
       success: true,
       story,
+      receipts,
     });
   } catch (err) {
     console.error('[Story] Generation error:', err.message);
@@ -158,6 +157,14 @@ app.post('/api/story', async (req, res) => {
         success: false,
         error: "We've hit the daily AI limit. Please try again tomorrow.",
         code: 'DAILY_LIMIT_EXCEEDED',
+      });
+    }
+
+    if (err instanceof InvalidApiKeyError) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid Groq API key.',
+        code: 'INVALID_API_KEY',
       });
     }
 

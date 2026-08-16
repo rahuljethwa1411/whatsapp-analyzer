@@ -28,6 +28,7 @@ export function StorySection({ story, getMessagesByIds, isUnlocked }: StorySecti
 
   // Preview mode shows first chapter only
   const displayChapters = isUnlocked ? story.chapters : story.chapters.slice(0, 1);
+  const renderReceiptText = (text: string) => resolveMessageIdsInText(text, getMessagesByIds);
 
   return (
     <section id="sec-story" className="report-story-section">
@@ -37,7 +38,7 @@ export function StorySection({ story, getMessagesByIds, isUnlocked }: StorySecti
         <p className="lede">{story.subtitle}</p>
 
         <div className="story-opening-box">
-          <p className="story-opening-text">"{story.opening}"</p>
+          <p className="story-opening-text">"{renderReceiptText(story.opening)}"</p>
         </div>
       </FadeReveal>
 
@@ -50,7 +51,7 @@ export function StorySection({ story, getMessagesByIds, isUnlocked }: StorySecti
                 <span className="chapter-period">{chapter.period}</span>
               </div>
               <h3 className="chapter-title">{chapter.title}</h3>
-              <p className="chapter-narrative">{chapter.narrative}</p>
+              <p className="chapter-narrative">{renderReceiptText(chapter.narrative)}</p>
 
               {chapter.keyStats.length > 0 && (
                 <div className="chapter-stats-row">
@@ -82,4 +83,20 @@ export function StorySection({ story, getMessagesByIds, isUnlocked }: StorySecti
       </div>
     </section>
   );
+}
+
+function resolveMessageIdsInText(
+  text: string,
+  getMessagesByIds: (ids: string[]) => ChatMessage[]
+): string {
+  const ids = [...new Set(text.match(/\bmsg_\d+\b/g) || [])];
+  if (ids.length === 0) return text;
+
+  const messages = new Map(getMessagesByIds(ids).map((msg) => [msg.id, msg]));
+  return text.replace(/\bmsg_\d+\b/g, (id) => {
+    const msg = messages.get(id);
+    if (!msg?.text) return id;
+    const preview = msg.text.length > 140 ? `${msg.text.slice(0, 137)}...` : msg.text;
+    return `${msg.sender || 'Unknown'}: "${preview}"`;
+  });
 }

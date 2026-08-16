@@ -1,9 +1,15 @@
 /**
- * Token-Budget & Count-Bounded Chunker (TypeScript client version)
+ * Token-Aware Extraction Chunker (TypeScript client version) — Phase 1 Fix
  *
- * Mirrors the server-side chunker.js logic.
- * Enforces token budgets (~2,500 tokens max) AND message count limits (120 msgs max).
- * Evenly samples up to 20 representative timeline chunks for large chats.
+ * Groups messages into AnalysisChunks respecting token budgets (~4,000 max total input),
+ * message count limits (120 msgs max), and session boundaries.
+ *
+ * Guarantees:
+ *   ✓ Every chunk stays strictly under MAX_MESSAGE_PAYLOAD_TOKENS (3400)
+ *   ✓ Prompt overhead (~600) is accounted for
+ *   ✓ No arbitrary 20-chunk downsampling (all messages covered)
+ *   ✓ Strict chronological order preserved
+ *   ✓ Oversized single messages truncated safely
  */
 
 import { ChatMessage } from '../types/chat';
@@ -12,15 +18,17 @@ import { AnalysisChunk } from '../types/intelligence';
 
 // ─── Token Budget ─────────────────────────────────────────────────────────────
 
-const MAX_EXTRACTION_INPUT_TOKENS = 2500;
-const MAX_MESSAGES_PER_CHUNK = 120;
-const MAX_EXTRACTION_CHUNKS = 20;
-const MAX_SINGLE_MESSAGE_TOKENS = 500;
+export const PROMPT_OVERHEAD_TOKENS = 600;
+export const MAX_EXTRACTION_INPUT_TOKENS = 4000;
+export const MAX_MESSAGE_PAYLOAD_TOKENS =
+  MAX_EXTRACTION_INPUT_TOKENS - PROMPT_OVERHEAD_TOKENS; // 3400
+export const MAX_MESSAGES_PER_CHUNK = 120;
+export const MAX_SINGLE_MESSAGE_TOKENS = 500;
 const SESSION_GAP_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 // ─── Token Estimator ──────────────────────────────────────────────────────────
 
-function estimateTokens(text: string): number {
+export function estimateTokens(text: string): number {
   if (!text) return 0;
   let asciiCount = 0;
   let unicodeCount = 0;
@@ -32,26 +40,27 @@ function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(raw * 1.1));
 }
 
-function estimateMessageTokens(msg: { id: string; sender: string | null; text: string }): number {
-  const line = `[${msg.id}] ${msg.sender || 'Unknown'}: ${msg.text || ''}\n`;
+export function estimateMessageTokens(msg: { id: string; sender: string | null; timestamp?: Date | string; text: string }): number {
+  const ts = msg.timestamp ? (typeof msg.timestamp === 'string' ? msg.timestamp : msg.timestamp.toISOString()) : '';
+  const line = `[${msg.id}] [${ts}] ${msg.sender || 'Unknown'}: ${msg.text || ''}\n`;
   return estimateTokens(line);
 }
 
-function estimateChunkPayloadTokens(
-  messages: Array<{ id: string; sender: string | null; text: string }>
+export function estimateChunkPayloadTokens(
+  messages: Array<{ id: string; sender: string | null; timestamp?: Date | string; text: string }>
 ): number {
   return messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
 }
 
-function truncateMessageIfOversized(msg: ChatMessage): ChatMessage {
-  if (estimateMessageTokens(msg as any) <= MAX_SINGLE_MESSAGE_TOKENS) return msg;
+export function truncateMessageIfOversized(msg: ChatMessage): ChatMessage {
+  if (estimateMessageTokens(msg) <= MAX_SINGLE_MESSAGE_TOKENS) return msg;
 
   let lo = 0;
   let hi = msg.text.length;
   while (lo < hi) {
     const mid = Math.floor((lo + hi + 1) / 2);
     const candidate = { ...msg, text: msg.text.slice(0, mid) + '…' };
-    if (estimateMessageTokens(candidate as any) <= MAX_SINGLE_MESSAGE_TOKENS) {
+    if (estimateMessageTokens(candidate) <= MAX_SINGLE_MESSAGE_TOKENS) {
       lo = mid;
     } else {
       hi = mid - 1;
@@ -65,7 +74,7 @@ function truncateMessageIfOversized(msg: ChatMessage): ChatMessage {
 export function createAnalysisChunks(
   messages: ChatMessage[],
   _sessions: ConversationSession[],
-  maxTokensPerChunk: number = MAX_EXTRACTION_INPUT_TOKENS
+  maxTokensPerChunk: number = MAX_MESSAGE_PAYLOAD_TOKENS
 ): AnalysisChunk[] {
   const normalMessages = messages
     .filter(m => m.type === 'message' && m.text && m.text.trim().length > 0)
@@ -90,71 +99,75 @@ export function createAnalysisChunks(
   }
   if (currentGroup.length > 0) sessionGroups.push(currentGroup);
 
-  // ── 2. Pack sessions into token- & count-budgeted chunks ───────────────────
-  const allRawChunks: AnalysisChunk[] = [];
-  let currentChunkMessages: ChatMessage[] = [];
-  let currentChunkTokens = 0;
+  // ── 2. Pack sessions token-by-token ──────────────────────────────────────
+  const chunks: AnalysisChunk[] = [];
+  let currentMessages: ChatMessage[] = [];
+  let currentTokens = 0;
   let currentSessionIds: string[] = [];
   let chunkIndex = 0;
+  let oversizedCount = 0;
 
-  const finalizeChunk = () => {
-    if (currentChunkMessages.length === 0) return;
-    allRawChunks.push(buildChunk(chunkIndex, currentSessionIds, currentChunkMessages));
+  const finalize = () => {
+    if (currentMessages.length === 0) return;
+    chunks.push(buildChunk(chunkIndex, currentSessionIds, currentMessages));
     chunkIndex++;
-    currentChunkMessages = [];
-    currentChunkTokens = 0;
+    currentMessages = [];
+    currentTokens = 0;
     currentSessionIds = [];
   };
 
   for (let si = 0; si < sessionGroups.length; si++) {
-    const sg = sessionGroups[si];
     const sessionId = `session_${si + 1}`;
-    const sessionTokens = estimateChunkPayloadTokens(sg as any[]);
 
-    const fitsInCurrent =
-      currentChunkMessages.length + sg.length <= MAX_MESSAGES_PER_CHUNK &&
-      currentChunkTokens + sessionTokens <= maxTokensPerChunk;
+    for (const rawMsg of sessionGroups[si]) {
+      const msg = truncateMessageIfOversized(rawMsg);
+      const msgTokens = estimateMessageTokens(msg);
 
-    if (fitsInCurrent) {
-      currentChunkMessages.push(...sg);
-      currentChunkTokens += sessionTokens;
-      currentSessionIds.push(sessionId);
-    } else if (sessionTokens <= maxTokensPerChunk && sg.length <= MAX_MESSAGES_PER_CHUNK) {
-      finalizeChunk();
-      currentChunkMessages.push(...sg);
-      currentChunkTokens += sessionTokens;
-      currentSessionIds.push(sessionId);
-    } else {
-      if (currentChunkMessages.length > 0) finalizeChunk();
+      if (msgTokens > maxTokensPerChunk) {
+        if (currentMessages.length > 0) finalize();
+        oversizedCount++;
+        console.warn(
+          `[Chunker] Single message ${msg.id} exceeds budget (${msgTokens} > ${maxTokensPerChunk}). Isolated.`
+        );
+        currentMessages.push(msg);
+        currentTokens += msgTokens;
+        if (!currentSessionIds.includes(sessionId)) currentSessionIds.push(sessionId);
+        finalize();
+        continue;
+      }
 
-      for (const rawMsg of sg) {
-        const msg = truncateMessageIfOversized(rawMsg);
-        const msgTokens = estimateChunkPayloadTokens([msg as any]);
+      const wouldExceedTokens = currentTokens + msgTokens > maxTokensPerChunk;
+      const wouldExceedCount = currentMessages.length >= MAX_MESSAGES_PER_CHUNK;
 
-        if (
-          currentChunkMessages.length > 0 &&
-          (currentChunkMessages.length >= MAX_MESSAGES_PER_CHUNK ||
-            currentChunkTokens + msgTokens > maxTokensPerChunk)
-        ) {
-          finalizeChunk();
-        }
+      if (currentMessages.length > 0 && (wouldExceedTokens || wouldExceedCount)) {
+        finalize();
+      }
 
-        currentChunkMessages.push(msg);
-        currentChunkTokens += msgTokens;
-        if (!currentSessionIds.includes(sessionId)) {
-          currentSessionIds.push(sessionId);
-        }
+      currentMessages.push(msg);
+      currentTokens += msgTokens;
+      if (!currentSessionIds.includes(sessionId)) {
+        currentSessionIds.push(sessionId);
       }
     }
   }
 
-  finalizeChunk();
+  finalize();
 
-  if (allRawChunks.length <= MAX_EXTRACTION_CHUNKS) {
-    return allRawChunks;
+  // ── 3. Telemetry ──────────────────────────────────────────────────────────
+  for (const chunk of chunks) {
+    const firstId = chunk.messages[0]?.id ?? '?';
+    const lastId = chunk.messages[chunk.messages.length - 1]?.id ?? '?';
+    const estTokens = estimateChunkPayloadTokens(chunk.messages as any);
+    console.log(
+      `[Chunker] ${chunk.id} | ${chunk.messages.length} msgs | ~${estTokens} msg tokens (~${estTokens + PROMPT_OVERHEAD_TOKENS} total) | ${firstId} → ${lastId}`
+    );
   }
 
-  return sampleEvenly(allRawChunks, MAX_EXTRACTION_CHUNKS);
+  console.log(
+    `[Chunker] Created ${chunks.length} extraction chunks | Total messages: ${normalMessages.length} | Oversized single messages: ${oversizedCount}`
+  );
+
+  return chunks;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -185,15 +198,4 @@ function buildChunk(
       type: m.type,
     })),
   };
-}
-
-function sampleEvenly(arr: AnalysisChunk[], count: number): AnalysisChunk[] {
-  if (arr.length <= count) return arr;
-  const result: AnalysisChunk[] = [arr[0]];
-  const step = (arr.length - 1) / (count - 1);
-  for (let i = 1; i < count - 1; i++) {
-    result.push(arr[Math.round(i * step)]);
-  }
-  result.push(arr[arr.length - 1]);
-  return result.map((c, i) => ({ ...c, id: `chunk_${i + 1}` }));
 }

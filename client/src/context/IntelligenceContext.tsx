@@ -131,10 +131,28 @@ export function IntelligenceProvider({ children }: { children: ReactNode }) {
 
   const getMessagesByIds = useCallback((ids: string[]): ChatMessage[] => {
     if (!Array.isArray(ids)) return [];
-    return ids
-      .filter((id) => messageIndexRef.current.has(id))
-      .map((id) => messageIndexRef.current.get(id)!);
-  }, []);
+    const evidenceById = new Map(
+      (intelligence?._evidenceStore ?? [])
+        .filter((item) => item?.messageId && item.text)
+        .map((item) => [item.messageId, item])
+    );
+
+    return ids.flatMap((id) => {
+      const rawMessage = messageIndexRef.current.get(id);
+      if (rawMessage) return [rawMessage];
+
+      const evidence = evidenceById.get(id);
+      if (!evidence) return [];
+
+      return [{
+        id: evidence.messageId,
+        timestamp: evidence.timestamp ? new Date(evidence.timestamp) : new Date(0),
+        sender: evidence.sender ?? null,
+        text: evidence.text ?? '',
+        type: 'message' as const,
+      }];
+    });
+  }, [intelligence]);
 
   const runAnalysis = useCallback(
     async (
