@@ -25,8 +25,8 @@ app.get('/api/health', (req, res) => {
     service: 'Afterchat Server API',
     phase: 3,
     groqConfigured: !!process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'your_groq_api_key_here',
-    extractionModel: process.env.GROQ_EXTRACTION_MODEL || process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
-    synthesisModel: process.env.GROQ_SYNTHESIS_MODEL || process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    extractionModel: process.env.GROQ_EXTRACTION_MODEL || process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
+    synthesisModel: process.env.GROQ_SYNTHESIS_MODEL || process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
     timestamp: new Date().toISOString(),
   });
 });
@@ -310,8 +310,8 @@ if (fs.existsSync(clientDistPath)) {
 
 app.listen(PORT, () => {
   const groqOk = !!process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'your_groq_api_key_here';
-  const extractionModel = process.env.GROQ_EXTRACTION_MODEL || process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
-  const synthesisModel = process.env.GROQ_SYNTHESIS_MODEL || process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+  const extractionModel = process.env.GROQ_EXTRACTION_MODEL || process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
+  const synthesisModel = process.env.GROQ_SYNTHESIS_MODEL || process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
   console.log(`⚡ Afterchat API Server running on port ${PORT}`);
   console.log(`   Phase 3/4: ${groqOk ? '✅ Groq configured' : '⚠️  Set GROQ_API_KEY in server/.env'}`);
   if (groqOk) {

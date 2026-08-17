@@ -214,10 +214,10 @@ export class GroqProvider extends AIProvider {
     const baseURL = process.env.GROQ_BASE_URL || undefined;
     this.groq = new Groq({ apiKey, baseURL });
 
-    // Two configurable model tiers
-    const legacyDefault = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+    // Two configurable model tiers with auto-fallback defaults
+    const legacyDefault = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
     this.extractionModel =
-      process.env.GROQ_EXTRACTION_MODEL || legacyDefault;
+      process.env.GROQ_EXTRACTION_MODEL || 'openai/gpt-oss-20b';
     this.synthesisModel =
       process.env.GROQ_SYNTHESIS_MODEL || legacyDefault;
 
@@ -349,13 +349,20 @@ export class GroqProvider extends AIProvider {
 
         // ── Classify error ────────────────────────────────────────────────
 
-        // Model not found (404) — abort immediately, do NOT retry
+        // Model not found (404) or decommissioned (400) — attempt automatic fallback model
         if (
           status === 404 ||
+          (status === 400 && errMsg.includes('decommissioned')) ||
           errMsg.includes('model_not_found') ||
           errMsg.includes('does not exist') ||
           errMsg.includes('Model not found')
         ) {
+          const fallbackModel = tier === 'extraction' ? 'openai/gpt-oss-20b' : 'openai/gpt-oss-120b';
+          if (useModel !== fallbackModel) {
+            console.warn(`[Groq] Model "${useModel}" not available, falling back to "${fallbackModel}"...`);
+            useModel = fallbackModel;
+            continue;
+          }
           telemetry.failedRequests++;
           throw new Error(
             `Configured Groq model "${useModel}" was not found (404). Please check GROQ_EXTRACTION_MODEL / GROQ_SYNTHESIS_MODEL in server/.env`
