@@ -55,8 +55,8 @@ export function AnalysisSequence({
   const { analysis } = useChatAnalysis();
   const { setAccessMode } = useStory();
 
-  const totalMsgs = analysis?.metadata.totalMessages || 23979;
-  const participants = analysis?.metadata.participants || ['Rahul', 'iteeca💫'];
+  const totalMsgs = analysis?.metadata.totalMessages || 24821;
+  const participants = analysis?.metadata.participants || ['Participant A', 'Participant B'];
   const peakHourStr = analysis?.activity.peakHour?.label || '12:00 AM';
   const duration = analysis?.metadata.durationDays || 344;
   const topEmoji = analysis?.emojis.mostUsedEmoji || '😭';

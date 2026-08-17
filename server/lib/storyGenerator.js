@@ -75,7 +75,7 @@ export async function generateCompleteStory({
       }),
       schema: StorySchema,
       tier: 'synthesis',
-      maxOutputTokens: 6000,
+      maxOutputTokens: 3800,
       temperature: 0.8,
     });
   } catch (err) {
@@ -95,7 +95,7 @@ export async function generateCompleteStory({
         }),
         schema: StorySchema,
         tier: 'synthesis',
-        maxOutputTokens: 6000,
+        maxOutputTokens: 3800,
         temperature: 0.7,
       });
       console.log('[Story] Structured repair succeeded.');

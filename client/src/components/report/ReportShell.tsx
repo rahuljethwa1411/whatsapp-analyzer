@@ -21,6 +21,8 @@ import { WrappedSection } from './WrappedSection';
 import { FinalVerdict } from './FinalVerdict';
 import { PreviewGate } from './PreviewGate';
 import { exportPdfDossier } from '../../lib/pdfExporter';
+import { openRazorpayCheckout } from '../../lib/razorpay';
+import { RazorpayVerificationResponse } from '../../types/razorpay';
 
 import { useChatAnalysis } from '../../context/ChatAnalysisContext';
 import { useIntelligence } from '../../context/IntelligenceContext';
@@ -74,10 +76,35 @@ export function ReportShell() {
 
   const isUnlocked = accessMode === 'full';
 
+  const handleUnlockRequest = async () => {
+    if (isUnlocked) return;
+
+    try {
+      await openRazorpayCheckout({
+        amount: 49900, // ₹499 in paise
+        currency: 'INR',
+        name: 'Afterchat AI',
+        description: 'Unlock Full 6-Page Intelligence Dossier',
+        theme: {
+          color: '#cc513d',
+        },
+        onSuccess: (res: RazorpayVerificationResponse) => {
+          setAccessMode('full');
+        },
+        onError: (err: any) => {
+          const msg = typeof err === 'string' ? err : err.message || 'Payment failed';
+          alert(`Payment failed: ${msg}`);
+        },
+      });
+    } catch (err: any) {
+      alert(err.message || 'Error initiating payment');
+    }
+  };
+
   const totalMsgsStr = analysis ? analysis.metadata.totalMessages.toLocaleString() : '24,821';
   const participantsStr = analysis
     ? analysis.metadata.participants.join(', ')
-    : 'Rahul, Aisha, Kabir & Nikhil';
+    : 'Chat Participants';
   const durationDays = analysis ? analysis.metadata.durationDays : 580;
   const overallTone = intelligence?.overview.overallTone || 'Chaotic Comfort';
 
@@ -104,7 +131,7 @@ export function ReportShell() {
           totalMessagesStr={totalMsgsStr}
           durationDays={durationDays}
           onShare={() => setIsShareOpen(true)}
-          onUnlock={() => setAccessMode('full')}
+          onUnlock={handleUnlockRequest}
           onDownloadPdf={handleDownloadPdf}
           isUnlocked={isUnlocked}
         />
@@ -117,7 +144,7 @@ export function ReportShell() {
           story={story}
           getMessagesByIds={getMessagesByIds}
           isUnlocked={isUnlocked}
-          onUnlock={() => setAccessMode('full')}
+          onUnlock={handleUnlockRequest}
         />
 
         {/* 04. STORY ERAS (Shows 2 Eras in Free, All in Full) */}
@@ -125,7 +152,7 @@ export function ReportShell() {
           eras={intelligence?.eras || []}
           getMessagesByIds={getMessagesByIds}
           isUnlocked={isUnlocked}
-          onUnlock={() => setAccessMode('full')}
+          onUnlock={handleUnlockRequest}
         />
 
         {/* PREVIEW GATE / PAYWALL BANNER (Shown immediately after 2 free eras) */}

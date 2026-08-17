@@ -14,7 +14,7 @@ export function LoreCardDownload({
   const [downloading, setDownloading] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const cardTitle = title || (analysis ? analysis.metadata.participants.slice(0, 4).join(', ') : 'Rahul, Aisha, Kabir & Nikhil');
+  const cardTitle = title || (analysis ? analysis.metadata.participants.slice(0, 4).join(', ') : 'Documentary Archive');
   const cardStats = stats || (analysis ? `${analysis.metadata.totalMessages.toLocaleString()} messages · Peak ${analysis.activity.peakHour?.label || '11 PM'} · Top ${analysis.emojis.mostUsedEmoji || '💀'}` : '24,821 messages · 7 Eras · 17 Goa mentions · 0 trips taken');
 
   const handleGenerateAndDownload = () => {
@@ -86,7 +86,7 @@ export function LoreCardDownload({
     // Footer Credit
     ctx.fillStyle = '#8a8376';
     ctx.font = '14px Georgia, serif';
-    ctx.fillText('Made with ❤️ by Rahul · afterchat.app', 60, 435);
+    ctx.fillText('Made with ❤️ by AfterChat · afterchat.fun', 60, 435);
 
     ctx.fillStyle = '#cc513d';
     ctx.font = 'bold 18px Georgia, serif';

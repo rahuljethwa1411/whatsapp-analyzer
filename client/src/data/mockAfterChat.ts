@@ -1,7 +1,7 @@
 export const report = {
   evidence: [
-    { name: 'Rahul', text: 'bro we’re actually going Goa this time' },
-    { name: 'Aisha', text: '100%' },
+    { name: 'Alex', text: 'bro we’re actually going Goa this time' },
+    { name: 'Sam', text: '100%' },
     { name: 'Kabir', text: 'booking tomorrow' },
   ],
   stats: [
@@ -58,7 +58,7 @@ export const eras = [
 ];
 export const people = [
   {
-    name: 'Rahul',
+    name: 'Alex',
     role: 'THE INSTIGATOR',
     description: 'Starts a harmless idea, then leaves everyone holding a spreadsheet.',
     stat: '68 plans proposed',

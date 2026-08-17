@@ -77,7 +77,7 @@ const MAX_PARALLEL_CHUNKS = Math.max(
 );
 
 // If more than this fraction of chunks fail, abort the entire analysis
-const MAX_ACCEPTABLE_FAILURE_RATE = 0.4;
+const MAX_ACCEPTABLE_FAILURE_RATE = 0.6; // raised: abort only if >60% fail
 
 let providerInstance = null;
 
@@ -171,7 +171,7 @@ export async function runIntelligencePipeline(request, onProgress = () => {}) {
   // ─── STEP 3: Relationship Investigator (TIER 2 — unified synthesis) ──────
   progress('Investigating relationship dynamics...', 68);
 
-  const formattedEvidence = formatEvidenceForPrompt(evidenceStore, 80);
+  const formattedEvidence = formatEvidenceForPrompt(evidenceStore, 120);
   let rawInvestigatorResult = null;
 
   try {
@@ -183,11 +183,11 @@ export async function runIntelligencePipeline(request, onProgress = () => {}) {
         participantStats,
         compactMemory,
         formattedEvidence,
-        evidenceCount: Math.min(evidenceStore.length, 80),
+        evidenceCount: Math.min(evidenceStore.length, 120),
       }),
       schema: RelationshipInvestigatorSchema,
       tier: 'synthesis',
-      maxOutputTokens: 4500, // Safe bounded budget for full relationship model (100-250w eras + 13 dims)
+      maxOutputTokens: 4500,
     });
   } catch (err) {
     if (err instanceof DailyLimitError || err instanceof InvalidApiKeyError) throw err;
@@ -204,7 +204,7 @@ export async function runIntelligencePipeline(request, onProgress = () => {}) {
           participantStats,
           compactMemory,
           formattedEvidence,
-          evidenceCount: Math.min(evidenceStore.length, 60),
+          evidenceCount: Math.min(evidenceStore.length, 120),
         }),
         schema: RelationshipInvestigatorSchema,
         tier: 'synthesis',
@@ -323,11 +323,11 @@ async function extractAllChunks(chunks, provider, onBatchProgress) {
       }
     }
 
-    // Check failure rate
+    // Check failure rate — only after processing enough chunks
     const totalProcessed = chunksSucceeded + chunksFailed;
     if (
       chunksFailed > 0 &&
-      totalProcessed >= 3 &&
+      totalProcessed >= 5 &&
       chunksFailed / totalProcessed > MAX_ACCEPTABLE_FAILURE_RATE
     ) {
       throw new Error(
@@ -426,9 +426,9 @@ export async function extractSingleChunkWithRecovery(chunk, index, total, provid
   }
 
   // 2. Build the exact request once, then use the same object for estimation and Groq.
+  //    buildExtractionRequest sets max_tokens and reasoning_effort correctly per model type.
   const request = buildExtractionRequest(chunk, index, total, {
     model: provider.extractionModel,
-    maxOutputTokens: 1800,
   });
   const tokenInfo = estimateExtractionRequest(request);
   logExtractionTokenDebug(chunk, request, tokenInfo);

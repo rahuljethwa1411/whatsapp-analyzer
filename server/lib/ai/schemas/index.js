@@ -523,7 +523,7 @@ export const AfterchatIntelligenceSchema = z.object({
     importance: z.number().min(0).max(1),
     evidenceMessageIds: z.array(z.string()),
   })),
-});
+}).passthrough();
 
 // ─── Phase 4 Story Schemas ──────────────────────────────────────────────────
 // UNCHANGED — do not modify these.

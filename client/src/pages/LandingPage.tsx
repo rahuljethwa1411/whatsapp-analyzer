@@ -198,9 +198,9 @@ export function LandingPage() {
                       exit={{ opacity: 0, y: -8 }}
                     >
                       <span className="preview-label">CHARACTER ARCHETYPES</span>
-                      <p className="preview-heading">Rahul: The Instigator</p>
+                      <p className="preview-heading">Alex: The Instigator</p>
                       <p className="preview-sub">“Proposes 68 plans, leaves everyone with a spreadsheet.”</p>
-                      <small className="preview-foot">Aisha: The Therapist (91 check-ins)</small>
+                      <small className="preview-foot">Sam: The Therapist (91 check-ins)</small>
                     </motion.div>
                   )}
                 </AnimatePresence>

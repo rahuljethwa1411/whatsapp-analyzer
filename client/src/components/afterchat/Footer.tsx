@@ -27,10 +27,19 @@ export function Footer({ onOpenContact }: FooterProps) {
           </div>
 
           <div className="footer-col">
+            <span className="footer-heading">LEGAL & POLICIES</span>
+            <a href="/terms">Terms & Conditions</a>
+            <a href="/privacy">Privacy Policy</a>
+            <a href="/refund">Refund Policy</a>
+            <a href="/contact">Contact Support</a>
+          </div>
+
+          <div className="footer-col">
             <span className="footer-heading">CONNECT</span>
+            <a href="/contact">Support Email</a>
             {onOpenContact && (
               <button onClick={onOpenContact} className="footer-link-btn">
-                Contact Rahul
+                Contact Modal
               </button>
             )}
             <a href="https://github.com" target="_blank" rel="noopener noreferrer">
@@ -53,7 +62,7 @@ export function Footer({ onOpenContact }: FooterProps) {
           >
             ❤️
           </motion.span>{' '}
-          by <b>Rahul</b>
+          by <b>AfterChat Team</b>
         </p>
         <p className="copyright">© {new Date().getFullYear()} AfterChat. All chats parsed locally.</p>
       </div>

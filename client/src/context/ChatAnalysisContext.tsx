@@ -29,16 +29,16 @@ function hydrateDates(obj: any): any {
   return obj;
 }
 
-const defaultSampleFixture = `12/08/24, 10:42 pm - Rahul: bro we're actually going Goa this time
-12/08/24, 10:43 pm - Aisha: 100%
+const defaultSampleFixture = `12/08/24, 10:42 pm - Alex: bro we're actually going Goa this time
+12/08/24, 10:43 pm - Sam: 100%
 12/08/24, 10:45 pm - Kabir: booking tomorrow
-12/08/24, 10:46 pm - Rahul: bro I wanted to tell you
+12/08/24, 10:46 pm - Alex: bro I wanted to tell you
 something really important but I forgot
 12/08/24, 11:15 pm - Nikhil: <Media omitted>
-13/08/24, 01:17 am - Rahul: 💀 loooool
-13/08/24, 01:18 am - Aisha: are you okay?
-15/08/24, 09:30 am - Rahul: im on my way
-15/08/24, 10:00 am - System: Rahul created group "Goa 2024"
+13/08/24, 01:17 am - Alex: 💀 loooool
+13/08/24, 01:18 am - Sam: are you okay?
+15/08/24, 09:30 am - Alex: im on my way
+15/08/24, 10:00 am - System: Alex created group "Goa 2024"
 15/08/24, 11:00 am - Kabir: dramatic re-entry 🤡`;
 
 function getDefaultSampleAnalysis(): { analysis: ChatAnalysis; messages: ChatMessage[] } {

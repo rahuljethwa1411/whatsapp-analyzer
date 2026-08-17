@@ -13,9 +13,9 @@ export function buildFallbackStory(
   intelligence: AfterchatIntelligence | null | undefined,
   analysis: ChatAnalysis
 ): Story {
-  const participants = analysis?.metadata?.participants || ['Rahul', 'iteeca💫'];
-  const totalMsgs = (analysis?.metadata?.totalMessages || 23979).toLocaleString();
-  const duration = analysis?.metadata?.durationDays || 344;
+  const participants = analysis?.metadata?.participants || ['Participant 1', 'Participant 2'];
+  const totalMsgs = (analysis?.metadata?.totalMessages || 24821).toLocaleString();
+  const duration = analysis?.metadata?.durationDays || 365;
   const topTheme = intelligence?.overview?.dominantThemes?.[0] || 'Unpaid Crisis Management & Banter';
   const overallTone = intelligence?.overview?.overallTone || 'Chaotic & Unhinged';
   const peakHour = analysis?.activity?.peakHour?.label || '12:00 AM';

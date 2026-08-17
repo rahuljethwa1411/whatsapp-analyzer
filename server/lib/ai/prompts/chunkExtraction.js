@@ -9,7 +9,10 @@
  */
 
 export function buildChunkExtractionSystemPrompt() {
-  return `You are extracting VERIFIED CONVERSATION EVIDENCE from one chronological chat chunk.
+  return `RESPOND WITH VALID JSON ONLY. No prose. No explanations. No markdown. Your entire response must be parseable by JSON.parse().
+If there is nothing meaningful to extract, return: {"period":{"start":"","end":""},"topics":[],"recurringThemes":[],"evidence":[]}
+
+You are extracting VERIFIED CONVERSATION EVIDENCE from one chronological chat chunk.
 
 You are relationship-agnostic.
 Do not assume the conversation is romantic, friendly, familial, professional, hostile, casual, or any other relationship type.
@@ -134,7 +137,21 @@ STRICT RULES:
 7. A turning_point = genuine change in dynamic/situation/trajectory. Ordinary emotion is not enough.
 8. "importance": 0.90-1.00 = extremely significant | 0.75-0.89 = strongly meaningful | 0.55-0.74 = useful supporting evidence | 0.40-0.54 = mild but worth noting
 9. Return ONLY the 20 most important items. 20 is a hard maximum, not a target.
-10. Return ONLY valid JSON matching ChunkEvidenceSchema.`;
+10. Return ONLY valid JSON matching ChunkEvidenceSchema.
+
+═══════════════════════════════════════════════════
+JSON SAFETY — CRITICAL:
+═══════════════════════════════════════════════════
+The "connection" field MUST be written in clean analytical English ONLY.
+- DO NOT copy, quote, or paste any part of a message into "connection"
+- DO NOT include Hindi text, Hinglish, or any non-ASCII characters in "connection"
+- DO NOT include double quotes (") inside "connection" — describe instead
+- Write ONLY third-person analytical observations about the message's significance
+- Bad: "sender says 'bhai sun' then goes silent" → Bad (contains quotes)
+- Bad: "woh baat nahi karta" → Bad (Hindi/non-ASCII)
+- Good: "sender goes from active engagement to one-word replies — emotional withdrawal signal"
+- Good: "recurring topic: football match results discussed across multiple messages"
+The entire output MUST be parseable by JSON.parse() with no errors.`;
 }
 
 function formatCompactTimestamp(isoStr) {
@@ -189,5 +206,12 @@ CRITICAL RULES:
 - For recurring subjects AND emotional texture shifts: extract a representative message with a specific connection describing what the pattern/shift is.
 - Return only the 20 most important evidence items. Max 20 is not a target; return fewer when appropriate.
 - Avoid generic connections like "they talked", "conversation continued", "they seemed comfortable".
-- Return ONLY valid JSON. No prose. No markdown.`;
+
+JSON SAFETY — NON-NEGOTIABLE:
+- "connection" must be written in ENGLISH ONLY — no Hindi, Hinglish, or non-ASCII characters.
+- "connection" must NEVER contain direct quotes from messages. Describe in third-person analytical prose.
+- Example good: "sender switches from active replies to single-word responses — emotional disengagement signal"
+- Example bad: "sender says 'bhai sun'" or "woh chup ho gaya" — both will break JSON.
+- Return ONLY valid JSON. No prose. No markdown. Must parse with JSON.parse() without errors.
+- If the chunk has too few messages to extract meaningful evidence, return the JSON structure with an empty evidence array. NEVER return prose or explanations instead of JSON.`;
 }

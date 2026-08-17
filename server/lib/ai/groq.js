@@ -214,12 +214,11 @@ export class GroqProvider extends AIProvider {
     const baseURL = process.env.GROQ_BASE_URL || undefined;
     this.groq = new Groq({ apiKey, baseURL });
 
-    // Two configurable model tiers with auto-fallback defaults
-    const legacyDefault = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+    // Two configurable model tiers — defaults to gpt-oss models
     this.extractionModel =
-      process.env.GROQ_EXTRACTION_MODEL || 'openai/gpt-oss-20b';
+      process.env.GROQ_EXTRACTION_MODEL || process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
     this.synthesisModel =
-      process.env.GROQ_SYNTHESIS_MODEL || legacyDefault;
+      process.env.GROQ_SYNTHESIS_MODEL || process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 
     console.log(
       `[Groq] Extraction model: ${this.extractionModel} | Synthesis model: ${this.synthesisModel}`
@@ -245,9 +244,22 @@ export class GroqProvider extends AIProvider {
         tier === 'extraction' ? this.extractionModel : this.synthesisModel;
     }
 
-    const maxTokens = maxOutputTokens ?? 4096;
+    // For extraction, cap max_tokens higher so there is room for both reasoning and JSON output.
+    // gpt-oss thinking models consume reasoning tokens out of the same max_tokens budget;
+    // too low a limit means they exhaust it mid-thought and never produce any JSON.
+    const defaultMaxTokens = tier === 'extraction' ? 6000 : 4096;
+    const maxTokens = maxOutputTokens ?? defaultMaxTokens;
     const defaultTemp = tier === 'extraction' ? 0.1 : 0.75;
     const temp = typeof temperature === 'number' ? temperature : defaultTemp;
+
+    // gpt-oss models are thinking models — they reason then output JSON.
+    // reasoning_effort:'low' on extraction minimises the thinking budget so the
+    // bulk of max_tokens is available for the actual JSON output.
+    // synthesis uses the default reasoning effort for better quality.
+    const isGptOss = useModel.startsWith('openai/gpt-oss');
+    const extraParams = isGptOss && tier === 'extraction'
+      ? { reasoning_effort: 'low' }
+      : {};
 
     return this.completeRequest({
       request: {
@@ -258,7 +270,7 @@ export class GroqProvider extends AIProvider {
         ],
         temperature: temp,
         max_tokens: maxTokens,
-        response_format: { type: 'json_object' },
+        ...extraParams,
       },
       schema,
       tier,
@@ -277,9 +289,11 @@ export class GroqProvider extends AIProvider {
       try {
         if (tier === 'extraction') {
           tokenInfo = estimateExtractionRequest(request);
-          // Reserve input + expected output tokens — Groq TPM counts both.
-          // max_tokens defaults to 4096 if unset; use actual value when present.
-          const expectedOutputTokens = request.max_tokens ?? 1200;
+          // Reserve input + REALISTIC expected output — not max_tokens (which is a ceiling).
+          // Actual extraction output with reasoning_effort:'low' is ~300-800 tokens (compact JSON).
+          // Over-reserving max_tokens (4096) causes a full 60s queue stall after every call.
+          // Using 1200 lets the next call start as soon as actual usage clears the budget.
+          const expectedOutputTokens = 1200;
           const totalReservation = tokenInfo.estimatedInputTokens + expectedOutputTokens;
           queueReservation = await getExtractionQueue().acquire(
             totalReservation,
@@ -314,34 +328,32 @@ export class GroqProvider extends AIProvider {
           queueReservation = null;
         }
 
-        const content = response.choices?.[0]?.message?.content;
-        if (!content) throw new Error('Empty response from Groq');
+        const message = response.choices?.[0]?.message;
+        let content = message?.content;
 
-        // Parse JSON with multi-layered extraction
-        let parsed;
-        try {
-          parsed = JSON.parse(content);
-        } catch {
-          const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-          if (jsonMatch) {
-            try {
-              parsed = JSON.parse(jsonMatch[1]);
-            } catch (e) {
-              // fall through to brace extraction
-            }
+        // gpt-oss / thinking models may include a reasoning preamble in message.content
+        // before the actual JSON output. If content exists but contains no JSON object,
+        // try to extract just the JSON portion embedded within it.
+        if (content && typeof content === 'string' && content.trim()) {
+          const firstBrace = content.indexOf('{');
+          const lastBrace = content.lastIndexOf('}');
+          if (firstBrace === -1 || lastBrace <= firstBrace) {
+            // No JSON found in content — fall back to reasoning fields
+            content = message?.reasoning || message?.reasoning_content || response.choices?.[0]?.text || '';
+          } else if (firstBrace > 0) {
+            // JSON is embedded after a thinking preamble — slice to the JSON portion
+            content = content.slice(firstBrace);
           }
-          if (!parsed) {
-            const firstBrace = content.indexOf('{');
-            const lastBrace = content.lastIndexOf('}');
-            if (firstBrace !== -1 && lastBrace > firstBrace) {
-              parsed = JSON.parse(content.slice(firstBrace, lastBrace + 1));
-            } else {
-              throw new Error(
-                `Groq returned non-JSON content: ${content.slice(0, 200)}`
-              );
-            }
-          }
+        } else {
+          content = message?.reasoning || message?.reasoning_content || response.choices?.[0]?.text || '';
         }
+
+        if (!content || typeof content !== 'string' || !content.trim()) {
+          throw new Error('Empty response from Groq');
+        }
+
+        // Parse JSON with multi-layered extraction + aggressive repair
+        let parsed = robustJsonParse(content, queueLabel || useModel);
 
         const resultForValidation =
           typeof normalizeResult === 'function'
@@ -360,19 +372,7 @@ export class GroqProvider extends AIProvider {
 
         // ── Classify error ────────────────────────────────────────────────
 
-        // Groq proxy strict JSON validation error (400) — retry without strict response_format
-        if (
-          status === 400 &&
-          (errMsg.includes('json_validate_failed') ||
-            errMsg.includes('Failed to validate JSON') ||
-            errMsg.includes('JSON validation'))
-        ) {
-          console.warn('[Groq] Proxy JSON validation failed, retrying with raw parsing mode...');
-          delete request.response_format;
-          continue;
-        }
-
-        // Model not found (404) or decommissioned (400) — attempt automatic fallback model
+        // Model not found (404) or decommissioned — fail immediately, no silent fallback
         if (
           status === 404 ||
           (status === 400 && errMsg.includes('decommissioned')) ||
@@ -380,15 +380,9 @@ export class GroqProvider extends AIProvider {
           errMsg.includes('does not exist') ||
           errMsg.includes('Model not found')
         ) {
-          const fallbackModel = tier === 'extraction' ? 'openai/gpt-oss-20b' : 'openai/gpt-oss-120b';
-          if (useModel !== fallbackModel) {
-            console.warn(`[Groq] Model "${useModel}" not available, falling back to "${fallbackModel}"...`);
-            useModel = fallbackModel;
-            continue;
-          }
           telemetry.failedRequests++;
           throw new Error(
-            `Configured Groq model "${useModel}" was not found (404). Please check GROQ_EXTRACTION_MODEL / GROQ_SYNTHESIS_MODEL in server/.env`
+            `Groq model "${useModel}" was not found. Check GROQ_EXTRACTION_MODEL / GROQ_SYNTHESIS_MODEL in server/.env`
           );
         }
 
@@ -454,7 +448,7 @@ export class GroqProvider extends AIProvider {
           );
         }
 
-        // Network or 5xx — retry
+        // Network, 5xx, or empty/parsing hiccups — retryable
         const isRetryable5xx =
           (status >= 500 && status < 600) ||
           errMsg.includes('timeout') ||
@@ -462,7 +456,14 @@ export class GroqProvider extends AIProvider {
           errMsg.includes('ECONNRESET') ||
           errMsg.includes('ETIMEDOUT');
 
-        if ((!isTPM && !isRetryable5xx) || attempt >= MAX_RETRIES) {
+        const isRetryableTransient =
+          isTPM ||
+          isRetryable5xx ||
+          errMsg.includes('Empty response') ||
+          errMsg.includes('non-JSON') ||
+          errMsg.includes('Unexpected token');
+
+        if (!isRetryableTransient || attempt >= MAX_RETRIES) {
           // Non-retryable OR exhausted retries
           telemetry.failedRequests++;
           break;
@@ -516,6 +517,252 @@ export class GroqProvider extends AIProvider {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Multi-strategy JSON parser with aggressive repair.
+ * Handles all observed failure modes from Groq LLM responses including:
+ * - Truncated responses (hit max_tokens mid-array)
+ * - Unescaped characters in string values (Hindi text, raw quotes, newlines)
+ * - Partial corruption mid-array (valid items before the corruption point)
+ *
+ * @param {string} content - Raw response string from the model
+ * @param {string} [label] - Chunk label for logging
+ * @returns {any} - Parsed JavaScript object
+ * @throws {Error} - If all strategies fail
+ */
+function robustJsonParse(content, label = '') {
+  if (!content || typeof content !== 'string') {
+    throw new Error('Empty response from Groq');
+  }
+
+  // Strategy 1: Direct parse (fast path — works for well-formed responses)
+  try {
+    return JSON.parse(content);
+  } catch { /* try next */ }
+
+  // Strategy 2: Extract from markdown code block
+  const mdMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (mdMatch) {
+    try { return JSON.parse(mdMatch[1]); } catch { /* try next */ }
+  }
+
+  // Extract the outermost JSON object for all remaining strategies
+  const firstBrace = content.indexOf('{');
+  const lastBrace = content.lastIndexOf('}');
+  if (firstBrace === -1 || lastBrace <= firstBrace) {
+    throw new Error(`Groq returned non-JSON content: ${content.slice(0, 200)}`);
+  }
+  let candidate = content.slice(firstBrace, lastBrace + 1);
+
+  // Strategy 3: Truncation repair (close unclosed brackets/braces)
+  const repaired = repairTruncatedJson(candidate);
+  if (repaired) {
+    try {
+      const parsed = JSON.parse(repaired);
+      console.warn(`[Groq] Strategy 3 (truncation repair) succeeded for ${label}`);
+      return parsed;
+    } catch { /* try next */ }
+  }
+
+  // Strategy 4: Aggressive string sanitization
+  // Handles unescaped quotes/newlines/control chars inside JSON string values
+  try {
+    const sanitized = sanitizeJsonStrings(candidate);
+    const parsed = JSON.parse(sanitized);
+    console.warn(`[Groq] Strategy 4 (string sanitization) succeeded for ${label}`);
+    return parsed;
+  } catch { /* try next */ }
+
+  // Strategy 5: Partial evidence salvage
+  // If the evidence array is corrupted mid-way, salvage complete items from it
+  try {
+    const salvaged = salvagePartialEvidenceArray(candidate);
+    if (salvaged) {
+      console.warn(`[Groq] Strategy 5 (partial salvage: ${salvaged.evidence?.length || 0} items) succeeded for ${label}`);
+      return salvaged;
+    }
+  } catch { /* give up */ }
+
+  throw new Error(`Groq returned unparseable JSON after all repair strategies: ${content.slice(0, 200)}`);
+}
+
+/**
+ * Sanitizes JSON string values to remove or escape characters that break JSON.
+ * Targets the most common corruption from LLM-generated content:
+ * - Unescaped double quotes inside string values
+ * - Literal newlines inside strings
+ * - Control characters (0x00-0x1f)
+ *
+ * @param {string} json
+ * @returns {string}
+ */
+function sanitizeJsonStrings(json) {
+  // Use a state machine to find string boundaries, then sanitize within them
+  let result = '';
+  let i = 0;
+  let inString = false;
+  let escape = false;
+
+  while (i < json.length) {
+    const ch = json[i];
+
+    if (escape) {
+      result += ch;
+      escape = false;
+      i++;
+      continue;
+    }
+
+    if (ch === '\\' && inString) {
+      escape = true;
+      result += ch;
+      i++;
+      continue;
+    }
+
+    if (ch === '"') {
+      if (!inString) {
+        inString = true;
+        result += ch;
+      } else {
+        // Check if this quote is actually ending the string or is unescaped within it
+        // Look ahead: a closing string quote is followed by :, ,, }, ], or whitespace+those
+        const rest = json.slice(i + 1).replace(/^\s*/, '');
+        const isClosing = rest.length === 0 || /^[,:}\]]/.test(rest);
+        if (isClosing) {
+          inString = false;
+          result += ch;
+        } else {
+          // Unescaped quote inside string — escape it
+          result += '\\"';
+        }
+      }
+      i++;
+      continue;
+    }
+
+    if (inString) {
+      // Sanitize control chars and literal newlines inside string values
+      const code = ch.charCodeAt(0);
+      if (code === 0x0a) { result += '\\n'; }
+      else if (code === 0x0d) { result += '\\r'; }
+      else if (code === 0x09) { result += '\\t'; }
+      else if (code < 0x20) { result += ' '; } // other control chars → space
+      else { result += ch; }
+    } else {
+      result += ch;
+    }
+    i++;
+  }
+  return result;
+}
+
+/**
+ * Last-resort: regex-extract complete evidence objects from a corrupted array.
+ * Returns a minimal valid ChunkEvidence object with whatever items were valid.
+ *
+ * @param {string} json
+ * @returns {Object|null}
+ */
+function salvagePartialEvidenceArray(json) {
+  // Extract period, topics, recurringThemes from the outer object (usually intact)
+  let period = { start: '', end: '' };
+  let topics = [];
+  let recurringThemes = [];
+
+  try {
+    const periodMatch = json.match(/"period"\s*:\s*\{[^}]*"start"\s*:\s*"([^"]*)"[^}]*"end"\s*:\s*"([^"]*)"/);
+    if (periodMatch) period = { start: periodMatch[1], end: periodMatch[2] };
+
+    const topicsMatch = json.match(/"topics"\s*:\s*(\[[^\]]*\])/);
+    if (topicsMatch) topics = JSON.parse(topicsMatch[1]);
+
+    const themesMatch = json.match(/"recurringThemes"\s*:\s*(\[[^\]]*\])/);
+    if (themesMatch) recurringThemes = JSON.parse(themesMatch[1]);
+  } catch { /* partial extraction is fine */ }
+
+  // Extract individual evidence objects using a greedy regex
+  // Each evidence item is: { "messageId": "...", "type": "...", "importance": N, "connection": "..." }
+  const evidenceItems = [];
+  // Match complete objects within the evidence array, stopping before any corruption
+  const evidenceArrayMatch = json.match(/"evidence"\s*:\s*\[([\s\S]*)/);
+  if (!evidenceArrayMatch) return null;
+
+  const arrayContent = evidenceArrayMatch[1];
+  // Match individual complete evidence objects (stops at first broken one)
+  const itemRegex = /\{\s*"messageId"\s*:\s*"([^"]+)"\s*,\s*"type"\s*:\s*"([^"]+)"\s*,\s*"importance"\s*:\s*([\d.]+)\s*(?:,\s*"connection"\s*:\s*"([^"]*)")?\s*\}/g;
+  let match;
+  while ((match = itemRegex.exec(arrayContent)) !== null) {
+    evidenceItems.push({
+      messageId: match[1],
+      type: match[2],
+      importance: parseFloat(match[3]),
+      connection: match[4] || '',
+    });
+    if (evidenceItems.length >= 20) break;
+  }
+
+  if (evidenceItems.length === 0) return null;
+
+  return { period, topics, recurringThemes, evidence: evidenceItems };
+}
+
+function repairTruncatedJson(json) {
+  if (!json || typeof json !== 'string') return null;
+
+  // Remove trailing commas before closing brackets (common truncation artifact)
+  let s = json.replace(/,\s*$/, '');
+
+  // Track open braces/brackets to know what needs closing
+  const stack = [];
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\' && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+
+    if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if (ch === '}' || ch === ']') {
+      if (stack.length && stack[stack.length - 1] === ch) {
+        stack.pop();
+      }
+    }
+  }
+
+  if (stack.length === 0) return null; // Was already valid JSON (parse just failed for other reason)
+
+  // Trim any partial value at the end (e.g. a dangling string or number)
+  // Find last safe close point: last complete } or ]
+  const lastClose = Math.max(s.lastIndexOf('}'), s.lastIndexOf(']'));
+  if (lastClose > 0) {
+    s = s.slice(0, lastClose + 1);
+  }
+
+  // Re-compute stack after trimming
+  const stack2 = [];
+  inString = false;
+  escape = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\' && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') stack2.push('}');
+    else if (ch === '[') stack2.push(']');
+    else if (ch === '}' || ch === ']') {
+      if (stack2.length && stack2[stack2.length - 1] === ch) stack2.pop();
+    }
+  }
+
+  // Close any remaining open structures
+  return s + stack2.reverse().join('');
 }
 
 function logGroqErrorDebug(err, request, tier) {

@@ -8,7 +8,7 @@ interface ShareModalProps {
   summary?: string;
 }
 
-export function ShareModal({ isOpen, onClose, title = 'Rahul, Aisha, Kabir & Nikhil', summary = '24,821 messages · 7 Eras · 17 Goa mentions · 0 trips taken' }: ShareModalProps) {
+export function ShareModal({ isOpen, onClose, title = 'Our WhatsApp Group', summary = '24,821 messages · 7 Eras · 17 Goa mentions · 0 trips taken' }: ShareModalProps) {
   const [copied, setCopied] = useState(false);
 
   const shareText = `📜 AFTERCHAT DOCUMENTARY FOR ${title.toUpperCase()} 📜\n\n"${summary}"\n\nGenre: Chaotic Comfort\nTop Emoji: 💀\n\nGenerated with AfterChat ✦`;

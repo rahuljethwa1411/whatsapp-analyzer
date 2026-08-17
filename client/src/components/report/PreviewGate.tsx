@@ -30,7 +30,7 @@ export function PreviewGate({ onUnlock, unlockedCount }: PreviewGateProps) {
     setSuccessMessage(null);
 
     await openRazorpayCheckout({
-      amount: 54900, // ₹549 in paise
+      amount: 49900, // ₹499 in paise
       currency: 'INR',
       name: 'Afterchat AI',
       description: 'Unlock Full 6-Page Intelligence Dossier',
@@ -108,7 +108,7 @@ export function PreviewGate({ onUnlock, unlockedCount }: PreviewGateProps) {
           <div className="preview-gate-price-row">
             <div className="price-stack">
               <span className="original-price">₹999</span>
-              <b className="preview-gate-price">₹549</b>
+              <b className="preview-gate-price">₹499</b>
             </div>
             <small>One-time payment • Lifetime access • Instant unlock</small>
           </div>
@@ -163,7 +163,7 @@ export function PreviewGate({ onUnlock, unlockedCount }: PreviewGateProps) {
               <span>Opening Razorpay Secure Checkout...</span>
             ) : (
               <>
-                <span>Pay with Razorpay to Unlock Full Dossier (₹549)</span>
+                <span>Pay with Razorpay to Unlock Full Dossier (₹499)</span>
                 <span>💳 →</span>
               </>
             )}
@@ -175,23 +175,7 @@ export function PreviewGate({ onUnlock, unlockedCount }: PreviewGateProps) {
             <span>📱 1-Click WhatsApp & Instagram Share</span>
           </div>
 
-          <div style={{ marginTop: '16px', textAlign: 'center' }}>
-            <button
-              type="button"
-              onClick={onUnlock}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: 'inherit',
-                opacity: 0.6,
-                fontSize: '12px',
-                textDecoration: 'underline',
-                cursor: 'pointer',
-              }}
-            >
-              Free Demo Mode / Bypass for testing →
-            </button>
-          </div>
+
         </div>
       </FadeReveal>
     </section>

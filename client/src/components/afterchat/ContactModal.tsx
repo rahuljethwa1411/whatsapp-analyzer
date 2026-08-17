@@ -59,7 +59,7 @@ export function ContactModal({ isOpen, onClose }: ContactModalProps) {
                 <div className="success-icon">✨</div>
                 <h3>Message Received!</h3>
                 <p>
-                  Thanks for reaching out, <b>{name}</b>! Rahul has received your query and will get back to you shortly.
+                  Thanks for reaching out, <b>{name}</b>! We have received your query and will get back to you shortly.
                 </p>
                 <button className="button" onClick={handleResetAndClose}>
                   Close <span>→</span>
@@ -70,7 +70,7 @@ export function ContactModal({ isOpen, onClose }: ContactModalProps) {
                 <div className="modal-header">
                   <p className="eyebrow">GET IN TOUCH</p>
                   <h2>Send a message.</h2>
-                  <p className="lede">Have a question, feedback, or want to collaborate with Rahul? Drop a line below.</p>
+                  <p className="lede">Have a question, feedback, or want to collaborate with our team? Drop a line below.</p>
                 </div>
 
                 <form onSubmit={handleSubmit} className="modal-form">
@@ -79,7 +79,7 @@ export function ContactModal({ isOpen, onClose }: ContactModalProps) {
                     <input
                       id="contact-name"
                       type="text"
-                      placeholder="e.g. Rahul Sharma"
+                      placeholder="e.g. Alex Sharma"
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       required
@@ -91,7 +91,7 @@ export function ContactModal({ isOpen, onClose }: ContactModalProps) {
                     <input
                       id="contact-email"
                       type="email"
-                      placeholder="e.g. rahul@example.com"
+                      placeholder="e.g. alex@example.com"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       required

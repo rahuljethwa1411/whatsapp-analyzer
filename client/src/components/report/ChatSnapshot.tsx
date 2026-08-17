@@ -22,7 +22,7 @@ export function ChatSnapshot({ analysis }: ChatSnapshotProps) {
     ? `${analysis.streaks.longestActiveStreak.durationDays} DAYS`
     : '42 DAYS';
   const topEmoji = analysis?.emojis.mostUsedEmoji || '💀';
-  const mostActiveUser = analysis?.activity.mostActiveParticipant || 'Rahul';
+  const mostActiveUser = analysis?.activity.mostActiveParticipant || 'Top Contributor';
 
   const snapshotStats = [
     { value: totalMsgs, label: 'MESSAGES ANALYZED', note: 'Normal text messages parsed locally' },

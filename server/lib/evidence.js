@@ -91,13 +91,31 @@ export function buildEvidenceStore(extractions, messageIndex) {
   // Flatten all evidence items from all chunks
   const allItems = extractions.flatMap(e => e.evidence || []);
 
-  // Deduplicate by messageId — keep highest importance version
+  // Deduplicate by messageId.
+  // When the same message appears in multiple chunks:
+  //   - Keep the version with the highest importance.
+  //   - Prefer a richer connection string (longer = more analytical context).
   const byId = new Map();
   for (const item of allItems) {
     if (!item?.messageId || typeof item.messageId !== 'string') continue;
     const existing = byId.get(item.messageId);
-    if (!existing || (item.importance ?? 0) > (existing.importance ?? 0)) {
+    if (!existing) {
       byId.set(item.messageId, item);
+    } else {
+      const higherImportance = (item.importance ?? 0) > (existing.importance ?? 0);
+      const richerConnection =
+        (item.importance ?? 0) >= (existing.importance ?? 0) &&
+        (item.connection || '').length > (existing.connection || '').length;
+      if (higherImportance || richerConnection) {
+        byId.set(item.messageId, {
+          ...existing,
+          importance: Math.max(existing.importance ?? 0, item.importance ?? 0),
+          connection:
+            (item.connection || '').length > (existing.connection || '').length
+              ? item.connection
+              : existing.connection,
+        });
+      }
     }
   }
 
@@ -381,60 +399,33 @@ function evidenceScore(item) {
  * @returns {{ extraction: Object, stats: Object }}
  */
 export function validateChunkExtractionEvidence(extraction, chunk) {
-  const chunkMessageMap = new Map(
+  // Build a fast lookup of message IDs that actually exist in THIS chunk.
+  // This is the ONLY validation this function performs — normalizeExtractionResult
+  // already handled importance filtering, deduplication, and type normalization.
+  // Re-doing those here would silently discard valid evidence a second time.
+  const chunkMessageIds = new Set(
     (chunk.messages || [])
       .filter(m => m.type === 'message')
-      .map(m => [m.id, m])
+      .map(m => m.id)
   );
+
   const rawItems = Array.isArray(extraction?.evidence) ? extraction.evidence : [];
   const validEvidence = [];
-  const seen = new Set();
-  const rejections = [];
+  const invalidIds = [];
 
-  for (const item of rawItems.slice(0, 20)) {
-    if (!item?.messageId || !chunkMessageMap.has(item.messageId)) {
-      rejections.push({ reason: 'invalid_message_id', messageId: item?.messageId || '' });
+  for (const item of rawItems) {
+    if (!item?.messageId || !chunkMessageIds.has(item.messageId)) {
+      invalidIds.push(item?.messageId || '(missing)');
       continue;
     }
-
-    // Prefer the original_type (if present) when normalizing so we preserve
-    // the LLM-provided original value through validation.
-    const typeToNormalize = item.original_type || item.type;
-    const normalizedType = normalizeEvidenceType(typeToNormalize);
-
-    if ((item.importance ?? 0) < 0.4) {
-      rejections.push({ reason: 'low_importance', messageId: item.messageId, importance: item.importance ?? null });
-      continue;
-    }
-
-    if (seen.has(item.messageId)) {
-      rejections.push({ reason: 'duplicate_message_id', messageId: item.messageId });
-      continue;
-    }
-
-    seen.add(item.messageId);
-    const validItem = {
-      messageId: item.messageId,
-      type: normalizedType.type,
-      importance: item.importance,
-      connection: item.connection || '',
-    };
-    if (item.original_type) {
-      validItem.original_type = item.original_type;
-    } else if (normalizedType.unknown || normalizedType.normalized) {
-      validItem.original_type = normalizedType.originalType;
-    }
-    validEvidence.push(validItem);
+    // Pass through as-is — type normalization already done upstream
+    validEvidence.push(item);
   }
 
-  if (rawItems.length > 20) {
-    rejections.push({ reason: 'over_max_evidence_items', count: rawItems.length - 20 });
-  }
-
-  if (rejections.length > 0 || rawItems.length > 0) {
+  if (invalidIds.length > 0) {
     console.log(
-      `[Evidence] ${chunk.id || 'chunk'}: raw: ${rawItems.length}, valid: ${validEvidence.length}, rejected: ${rejections.length}` +
-      (rejections.length > 0 ? ` (${rejections.map(r => `${r.reason}${r.messageId ? `:${r.messageId}` : ''}`).join(', ')})` : '')
+      `[Evidence] ${chunk.id || 'chunk'}: ${validEvidence.length}/${rawItems.length} valid ` +
+      `(${invalidIds.length} invalid IDs stripped: ${invalidIds.slice(0, 5).join(', ')}${invalidIds.length > 5 ? '...' : ''})`
     );
   }
 
@@ -446,52 +437,106 @@ export function validateChunkExtractionEvidence(extraction, chunk) {
     stats: {
       rawEvidenceItems: rawItems.length,
       validEvidenceItems: validEvidence.length,
-      rejectedEvidenceItems: rejections.length,
+      rejectedEvidenceItems: invalidIds.length,
       schemaNormalizationEvents: validEvidence.filter(item => item.original_type).length,
-      unknownEvidenceTypesNormalized: validEvidence.filter(item => item.type === 'other' && item.original_type && item.original_type.trim().toLowerCase().replace(/[\s-]+/g, '_') !== 'other').length,
-      rejections,
+      unknownEvidenceTypesNormalized: validEvidence.filter(
+        item => item.type === 'other' &&
+          item.original_type &&
+          item.original_type.trim().toLowerCase().replace(/[\s-]+/g, '_') !== 'other'
+      ).length,
     },
   };
 }
 
+// Type priority buckets for balanced evidence selection.
+// Ensures emotionally significant types always have representation even
+// when the store is dominated by recurring_language / behavior items.
+const EVIDENCE_TYPE_PRIORITY_BUCKETS = [
+  // Tier 1 — narrative anchors (turning points, conflicts, rejections)
+  new Set(['turning_point', 'conflict', 'rejection', 'apology', 'contradiction']),
+  // Tier 2 — emotional texture (the moments that make eras feel real)
+  new Set(['emotional_texture_shift', 'mood_shift', 'vulnerability', 'affection', 'love', 'flirting']),
+  // Tier 3 — pattern/relationship signals
+  new Set(['relationship_signal', 'callback_candidate', 'inside_joke', 'promise', 'foreshadowing_candidate']),
+  // Tier 4 — personality and topic anchors
+  new Set(['personality_signal', 'self_description', 'other_description', 'recurring_language', 'recurring_topic']),
+  // Tier 5 — entertaining moments
+  new Set(['funny', 'dramatic', 'memorable', 'event', 'plan', 'behavior', 'other']),
+];
+
 /**
  * Format the evidence store for inclusion in the investigator prompt.
- * Selects up to maxItems and formats them in chronological order.
  *
- * @param {Array} evidenceStore - EvidenceItem[]
- * @param {number} [maxItems=80]
+ * Selection strategy (120 items max):
+ *   1. Type-balanced pass: walk through priority buckets, take top items from each
+ *      so high-importance recurring_language doesn't crowd out turning_points.
+ *   2. Fill remaining slots with highest-importance unseen items.
+ *   3. Sort chronologically — eras need timeline context, not ranked lists.
+ *   4. Truncate long message text to 200 chars so one verbose message
+ *      can't crowd out dozens of shorter ones.
+ *
+ * @param {Array} evidenceStore - EvidenceItem[] sorted by importance desc
+ * @param {number} [maxItems=120]
  * @returns {string}
  */
-export function formatEvidenceForPrompt(evidenceStore, maxItems = 80) {
+export function formatEvidenceForPrompt(evidenceStore, maxItems = 120) {
   if (!Array.isArray(evidenceStore) || evidenceStore.length === 0) {
     return 'No evidence items available.';
   }
 
-  // Strategy: top-N by importance + guarantee recurring_language items are included
-  // so topics like football/cricket always reach the investigator regardless of rank.
-  const primaryCap = Math.min(maxItems - 20, 60);
-  const topByImportance = evidenceStore.slice(0, primaryCap);
-  const topIds = new Set(topByImportance.map(e => e.messageId));
+  const selected = [];
+  const seenIds = new Set();
 
-  // Pull recurring_language items not already in top set (up to 20 guaranteed slots)
-  const recurringItems = evidenceStore
-    .filter(e => e.type === 'recurring_language' && !topIds.has(e.messageId))
-    .slice(0, 20);
+  // Phase 1 — type-balanced bucket pass
+  // Give each bucket a proportional slot count, take the highest-importance items.
+  const slotsPerBucket = Math.floor(maxItems * 0.7 / EVIDENCE_TYPE_PRIORITY_BUCKETS.length);
+  for (const bucket of EVIDENCE_TYPE_PRIORITY_BUCKETS) {
+    let taken = 0;
+    for (const item of evidenceStore) {
+      if (taken >= slotsPerBucket) break;
+      if (seenIds.has(item.messageId)) continue;
+      if (bucket.has(item.type)) {
+        selected.push(item);
+        seenIds.add(item.messageId);
+        taken++;
+      }
+    }
+  }
 
-  const selected = [...topByImportance, ...recurringItems];
+  // Phase 2 — fill remaining slots with highest-importance unseen items
+  for (const item of evidenceStore) {
+    if (selected.length >= maxItems) break;
+    if (!seenIds.has(item.messageId)) {
+      selected.push(item);
+      seenIds.add(item.messageId);
+    }
+  }
 
-  // Sort chronologically for timeline understanding
-  const chronological = [...selected].sort((a, b) =>
-    new Date(a.timestamp || 0) - new Date(b.timestamp || 0)
+  // Sort chronologically — the investigator needs timeline context, not ranked lists
+  const chronological = [...selected].sort(
+    (a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0)
   );
+
+  const typeCounts = {};
+  for (const item of chronological) {
+    typeCounts[item.type] = (typeCounts[item.type] || 0) + 1;
+  }
+  const typeBreakdown = Object.entries(typeCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([t, n]) => `${t}:${n}`)
+    .join(', ');
+  console.log(`[Evidence] Prompt selection: ${chronological.length} items (${typeBreakdown})`);
 
   return chronological.map(item => {
     const ts = item.timestamp ? item.timestamp.replace('T', ' ').slice(0, 16) : 'unknown date';
+    // Truncate long message text — 200 chars is enough for the investigator to
+    // recognise the moment without one verbose message crowding out many others.
+    const rawText = String(item.text || '');
+    const displayText = rawText.length > 200 ? rawText.slice(0, 200) + '…' : rawText;
     const lines = [
       `[${item.messageId}] ${ts} | ${item.sender || 'Unknown'} (${item.type}, imp=${item.importance})`,
-      `  "${item.text}"`,
+      `  "${displayText}"`,
     ];
-    // Always include connection for recurring_language — it names the topic
     if (item.connection) {
       lines.push(`  → ${item.connection}`);
     }

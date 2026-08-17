@@ -17,7 +17,7 @@ export function WrappedSection({ analysis }: WrappedSectionProps) {
   const totalMsgs = analysis ? analysis.metadata.totalMessages.toLocaleString() : '24,821';
   const durationDays = analysis ? analysis.metadata.durationDays : 580;
   const peakHour = analysis?.activity.peakHour?.label || '11 PM';
-  const topYapper = analysis?.activity.mostActiveParticipant || 'Rahul';
+  const topYapper = analysis?.activity.mostActiveParticipant || 'Top Contributor';
   const topEmoji = analysis?.emojis.mostUsedEmoji || '💀';
   const silenceDays = analysis?.streaks.longestSilence?.durationDays || 19;
 
