@@ -317,18 +317,29 @@ export class GroqProvider extends AIProvider {
         const content = response.choices?.[0]?.message?.content;
         if (!content) throw new Error('Empty response from Groq');
 
-        // Parse JSON
+        // Parse JSON with multi-layered extraction
         let parsed;
         try {
           parsed = JSON.parse(content);
         } catch {
           const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
           if (jsonMatch) {
-            parsed = JSON.parse(jsonMatch[1]);
-          } else {
-            throw new Error(
-              `Groq returned non-JSON content: ${content.slice(0, 200)}`
-            );
+            try {
+              parsed = JSON.parse(jsonMatch[1]);
+            } catch (e) {
+              // fall through to brace extraction
+            }
+          }
+          if (!parsed) {
+            const firstBrace = content.indexOf('{');
+            const lastBrace = content.lastIndexOf('}');
+            if (firstBrace !== -1 && lastBrace > firstBrace) {
+              parsed = JSON.parse(content.slice(firstBrace, lastBrace + 1));
+            } else {
+              throw new Error(
+                `Groq returned non-JSON content: ${content.slice(0, 200)}`
+              );
+            }
           }
         }
 
@@ -348,6 +359,18 @@ export class GroqProvider extends AIProvider {
         logGroqErrorDebug(err, request, tier);
 
         // ── Classify error ────────────────────────────────────────────────
+
+        // Groq proxy strict JSON validation error (400) — retry without strict response_format
+        if (
+          status === 400 &&
+          (errMsg.includes('json_validate_failed') ||
+            errMsg.includes('Failed to validate JSON') ||
+            errMsg.includes('JSON validation'))
+        ) {
+          console.warn('[Groq] Proxy JSON validation failed, retrying with raw parsing mode...');
+          delete request.response_format;
+          continue;
+        }
 
         // Model not found (404) or decommissioned (400) — attempt automatic fallback model
         if (
