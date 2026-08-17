@@ -256,12 +256,27 @@ export function UploadPage() {
             <p className="example">
               Example: This is my college friend group. We've known each other since 2022. We talk a lot about football and weekend plans.
             </p>
-            <div className="actions">
+
+            <div
+              style={{
+                marginTop: '16px',
+                padding: '10px 14px',
+                borderRadius: '8px',
+                background: 'rgba(204, 81, 61, 0.08)',
+                border: '1px solid rgba(204, 81, 61, 0.2)',
+                fontSize: '13px',
+                lineHeight: 1.5,
+              }}
+            >
+              ⏱️ <b>Estimated Duration:</b> Deep AI analysis processes your full chat in batches to build verified receipts. Large archives (10,000+ messages) typically take <b>5–8 minutes</b>.
+            </div>
+
+            <div className="actions" style={{ marginTop: '20px' }}>
               <button className="text-button" onClick={handleStartAnalysis}>
-                Skip
+                Skip & Start Analysis
               </button>
               <button className="button" onClick={handleStartAnalysis}>
-                Continue <span>→</span>
+                Start AI Analysis <span>→</span>
               </button>
             </div>
           </FadeReveal>

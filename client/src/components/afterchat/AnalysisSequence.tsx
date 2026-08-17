@@ -320,6 +320,27 @@ export function AnalysisSequence({
                 />
               </div>
 
+              {/* Time Estimate Banner */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  marginTop: '12px',
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  background: 'rgba(204, 81, 61, 0.08)',
+                  border: '1px solid rgba(204, 81, 61, 0.2)',
+                  fontSize: '12px',
+                  color: 'var(--ink)',
+                }}
+              >
+                <span style={{ fontSize: '14px' }}>⏱️</span>
+                <span>
+                  <b>Deep AI Analysis:</b> Large archives (10,000+ messages) take ~<b>5–8 minutes</b> to thoroughly extract eras, patterns, inside jokes, and verified receipts. Please keep this tab open.
+                </span>
+              </div>
+
               {/* Dynamic Live Teaser Ticker */}
               <div className="live-ticker-box">
                 <AnimatePresence mode="wait">
