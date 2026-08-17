@@ -1,9 +1,16 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { AnalyzeRequestSchema } from './lib/ai/schemas/index.js';
 import { runIntelligencePipeline } from './lib/intelligence.js';
 import { DailyLimitError, InvalidApiKeyError, getTokenTelemetry } from './lib/ai/groq.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const clientDistPath = path.resolve(__dirname, '../client/dist');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -290,6 +297,17 @@ app.post('/api/verify-payment', async (req, res) => {
   }
 });
 
+// ─── Static Frontend Serving (Production / Unified Deployment) ───────────
+if (fs.existsSync(clientDistPath)) {
+  app.use(express.static(clientDistPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) {
+      return next();
+    }
+    res.sendFile(path.join(clientDistPath, 'index.html'));
+  });
+}
+
 app.listen(PORT, () => {
   const groqOk = !!process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'your_groq_api_key_here';
   const extractionModel = process.env.GROQ_EXTRACTION_MODEL || process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
@@ -299,5 +317,8 @@ app.listen(PORT, () => {
   if (groqOk) {
     console.log(`   Extraction model: ${extractionModel}`);
     console.log(`   Synthesis model:  ${synthesisModel}`);
+  }
+  if (fs.existsSync(clientDistPath)) {
+    console.log(`   Frontend: Serving client/dist at http://localhost:${PORT}`);
   }
 });
