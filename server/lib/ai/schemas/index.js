@@ -74,6 +74,9 @@ export const ALLOWED_EVIDENCE_TYPES = [
   'self_description',
   'other_description',
   'recurring_language',
+  'recurring_topic',
+  'emotional_texture_shift',
+  'mood_shift',
   'other',
 ];
 
@@ -99,8 +102,8 @@ export const EvidenceItemSchema = z.object({
   timestamp:  z.string().optional(),   // Populated by application from raw dataset
 
   // ── Optional enrichment ───────────────────────────────────────────────────
-  tags:                 z.array(z.string()).max(5).optional(),
-  potentialConnections: z.array(z.string()).max(3).optional(),
+  tags:                 z.array(z.string()).max(10).optional(),
+  potentialConnections: z.array(z.string()).max(10).optional(),
 });
 
 // ChunkEvidenceSchema — single-pass output from the extraction model.
@@ -112,10 +115,19 @@ export const ChunkEvidenceSchema = z.object({
     end: z.string(),
   }),
   // Kept for memory.js → CompactChatMemory building (unchanged downstream)
-  topics:          z.array(z.string()).max(8),
-  recurringThemes: z.array(z.string()).max(5),
+  topics:          z.array(z.string()).max(20),
+  recurringThemes: z.array(z.string()).max(15),
   // Core new field — traceable evidence items
-  evidence: z.array(EvidenceItemSchema).max(20),
+  evidence: z.array(EvidenceItemSchema).max(30),
+  _normalization: z.object({
+    rawEvidenceItems: z.number().default(0),
+    deduplicatedEvidenceItems: z.number().default(0),
+    rankedEvidenceItems: z.number().default(0),
+    retainedEvidenceItems: z.number().default(0),
+    discardedAfterRanking: z.number().default(0),
+    evidenceOverflowEvents: z.number().default(0),
+    unknownEvidenceTypesNormalized: z.number().default(0),
+  }).optional(),
 });
 
 // ── Backward-compat aliases ───────────────────────────────────────────────────
@@ -194,6 +206,50 @@ export const EvidenceRefSchema = z.union([
   }),
 ]);
 
+export const ParticipantProfileSchema = z.preprocess((val) => {
+  if (!val || typeof val !== 'object') return val;
+  const obj = { ...val };
+  if (!obj.participant) {
+    obj.participant = obj.name || obj.person || obj.user || obj.participantName || 'Participant';
+  }
+  if (typeof obj.selfImage === 'string') {
+    obj.selfImage = [{ claim: obj.selfImage, evidence: [] }];
+  } else if (Array.isArray(obj.selfImage)) {
+    obj.selfImage = obj.selfImage.map(item => {
+      if (typeof item === 'string') return { claim: item, evidence: [] };
+      return item;
+    });
+  }
+  if (typeof obj.observedBehavior === 'string') {
+    obj.observedBehavior = [{ observation: obj.observedBehavior, evidence: [] }];
+  } else if (Array.isArray(obj.observedBehavior)) {
+    obj.observedBehavior = obj.observedBehavior.map(item => {
+      if (typeof item === 'string') return { observation: item, evidence: [] };
+      return item;
+    });
+  }
+  if (typeof obj.recurringHabits === 'string') {
+    obj.recurringHabits = [obj.recurringHabits];
+  }
+  return obj;
+}, z.object({
+  participant: z.string().default('Participant'),
+  selfImage: z.array(z.object({
+    claim: z.string().default(''),
+    evidence: z.array(EvidenceRefSchema).max(4).default([]),
+  })).default([]),
+  observedBehavior: z.array(z.object({
+    observation: z.string().default(''),
+    evidence: z.array(EvidenceRefSchema).max(4).default([]),
+  })).default([]),
+  recurringHabits: z.array(z.string()).default([]),
+  communicationStyle: z.string().default('Conversational'),
+  humorStyle: z.string().optional(),
+  emotionalStyle: z.string().optional(),
+  conflictRole: z.string().optional(),
+  goodMomentsRole: z.string().optional(),
+}));
+
 export const RelationshipInvestigatorSchema = z.object({
   // 1. Relationship timeline / eras
   eras: z.array(z.object({
@@ -205,45 +261,29 @@ export const RelationshipInvestigatorSchema = z.object({
     dominantTopics: z.array(z.string()).optional(),
     tone: z.string().optional(),
     majorChanges: z.array(z.string()).default([]),
-    evidence: z.array(EvidenceRefSchema).max(6).default([]),
-  })).max(12).default([]),
+    evidence: z.array(EvidenceRefSchema).default([]),
+  })).default([]),
 
   // 2. Behavioral character profiles
-  participantProfiles: z.array(z.object({
-    participant: z.string(),
-    selfImage: z.array(z.object({
-      claim: z.string(),
-      evidence: z.array(EvidenceRefSchema).max(4).default([]),
-    })).max(5).default([]),
-    observedBehavior: z.array(z.object({
-      observation: z.string(),
-      evidence: z.array(EvidenceRefSchema).max(4).default([]),
-    })).max(5).default([]),
-    recurringHabits: z.array(z.string()).max(6).default([]),
-    communicationStyle: z.string().default('Conversational'),
-    humorStyle: z.string().optional(),
-    emotionalStyle: z.string().optional(),
-    conflictRole: z.string().optional(),
-    goodMomentsRole: z.string().optional(),
-  })).default([]),
+  participantProfiles: z.array(ParticipantProfileSchema).default([]),
 
   // 3. Behavioral patterns across the chat
   patterns: z.array(z.object({
     id: z.string().optional(),
     pattern: z.string(),
     explanation: z.string().default(''),
-    evidence: z.array(EvidenceRefSchema).max(6).default([]),
+    evidence: z.array(EvidenceRefSchema).default([]),
     confidence: z.number().min(0).max(1).default(0.85),
-  })).max(10).default([]),
+  })).default([]),
 
   // 4. Contradictions (claim vs reality)
   contradictions: z.array(z.object({
     claim: z.string(),
     laterBehavior: z.string(),
     explanation: z.string().default(''),
-    evidence: z.array(EvidenceRefSchema).max(6).default([]),
+    evidence: z.array(EvidenceRefSchema).default([]),
     confidence: z.number().min(0).max(1).default(0.85),
-  })).max(8).default([]),
+  })).default([]),
 
   // 5. Callbacks across time
   callbacks: z.array(z.object({
@@ -251,7 +291,7 @@ export const RelationshipInvestigatorSchema = z.object({
     later: EvidenceRefSchema,
     connection: z.string().default(''),
     confidence: z.number().min(0).max(1).default(0.85),
-  })).max(8).default([]),
+  })).default([]),
 
   // 6. Foreshadowing
   foreshadowing: z.array(z.object({
@@ -259,31 +299,36 @@ export const RelationshipInvestigatorSchema = z.object({
     payoff: EvidenceRefSchema,
     explanation: z.string().default(''),
     confidence: z.number().min(0).max(1).default(0.85),
-  })).max(6).default([]),
+  })).default([]),
 
   // 7. Conversation Lore & Culture
-  lore: z.array(z.object({
+  lore: z.array(z.preprocess((val) => {
+    if (!val || typeof val !== 'object') return val;
+    const obj = { ...val };
+    if (!obj.name && obj.title) obj.name = obj.title;
+    return obj;
+  }, z.object({
     id: z.string().optional(),
-    name: z.string(),
+    name: z.string().default('Inside Joke Lore'),
     origin: z.string().default(''),
     howItEvolved: z.string().default(''),
-    evidence: z.array(EvidenceRefSchema).max(5).default([]),
-  })).max(10).default([]),
+    evidence: z.array(EvidenceRefSchema).default([]),
+  }))).default([]),
 
   // 8. Naturally funny material
   funnyMoments: z.array(z.object({
     moment: z.string(),
     whyFunny: z.string().default(''),
-    evidence: z.array(EvidenceRefSchema).max(4).default([]),
-  })).max(8).default([]),
+    evidence: z.array(EvidenceRefSchema).default([]),
+  })).default([]),
 
   // 9. Relationship turning points
   turningPoints: z.array(z.object({
     title: z.string(),
     description: z.string().default(''),
-    evidence: z.array(EvidenceRefSchema).max(4).default([]),
+    evidence: z.array(EvidenceRefSchema).default([]),
     significance: z.number().min(0).max(1).default(0.85),
-  })).max(8).default([]),
+  })).default([]),
 
   // 10. Plot twists
   plotTwists: z.array(z.object({
@@ -292,11 +337,10 @@ export const RelationshipInvestigatorSchema = z.object({
     description: z.string().default(''),
     beforeContext: z.string().optional(),
     afterContext: z.string().optional(),
-    evidence: z.array(EvidenceRefSchema).max(4).default([]),
+    evidence: z.array(EvidenceRefSchema).default([]),
     significance: z.number().min(0).max(1).default(0.85),
-  })).max(6).default([]),
+  })).default([]),
 
-  // 11. Key receipt candidates
   // 11. Key receipt candidates
   receiptCandidates: z.array(z.object({
     reason: z.string().default('Notable message receipt'),
@@ -305,21 +349,21 @@ export const RelationshipInvestigatorSchema = z.object({
     timestamp: z.string().optional().default(''),
     exactText: z.string().optional().default(''),
     importance: z.number().min(0).max(1).default(0.85),
-  })).max(20).default([]),
+  })).default([]),
 
   // 12. Unresolved threads
   unresolvedThreads: z.array(z.object({
     topic: z.string(),
     context: z.string().default(''),
-    evidence: z.array(EvidenceRefSchema).max(6).default([]),
-  })).max(8).default([]),
+    evidence: z.array(EvidenceRefSchema).default([]),
+  })).default([]),
 
   // 13. Story-relevant insights
   storyInsights: z.array(z.object({
     insight: z.string(),
-    evidence: z.array(EvidenceRefSchema).max(6).default([]),
+    evidence: z.array(EvidenceRefSchema).default([]),
     importance: z.number().min(0).max(1).default(0.85),
-  })).max(10).default([]),
+  })).default([]),
 
   // 14. Internal story blueprint
   overarchingStory: z.object({
@@ -329,11 +373,11 @@ export const RelationshipInvestigatorSchema = z.object({
     majorTurn: z.string().default(''),
     currentState: z.string().default(''),
     overallDynamic: z.string().default('Conversational dynamic'),
-    keyThemes: z.array(z.string()).max(8).default([]),
+    keyThemes: z.array(z.string()).default([]),
   }).default({}),
 
   // 15. Dominant themes
-  keyThemes: z.array(z.string()).max(8).default([]),
+  keyThemes: z.array(z.string()).default([]),
 });
 
 

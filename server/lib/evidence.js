@@ -176,6 +176,8 @@ export function validateEvidenceStore(evidenceItems, messageIndex) {
     });
 }
 
+export const MAX_EVIDENCE_PER_CHUNK = 20;
+
 const ALLOWED_EXTRACTION_TYPES = new Set([
   'affection',
   'love',
@@ -201,6 +203,9 @@ const ALLOWED_EXTRACTION_TYPES = new Set([
   'self_description',
   'other_description',
   'recurring_language',
+  'recurring_topic',
+  'emotional_texture_shift',
+  'mood_shift',
   'other',
 ]);
 
@@ -221,6 +226,150 @@ export function normalizeEvidenceType(type) {
     normalized: true,
     unknown: Boolean(raw),
   };
+}
+
+export function normalizeExtractionResult(result, chunkId = '') {
+  const rawEvidence = Array.isArray(result?.evidence) ? result.evidence : [];
+  const normalizedEvidence = rawEvidence
+    .filter(item => item && typeof item === 'object')
+    .map(item => {
+      const normalizedType = normalizeEvidenceType(item.type);
+      const normalized = {
+        ...item,
+        type: normalizedType.type,
+      };
+      if (normalizedType.normalized || normalizedType.unknown) {
+        normalized.original_type = normalizedType.originalType;
+      }
+      return normalized;
+    });
+
+  const unknownTypeNormalizations = normalizedEvidence.filter(item =>
+    item.original_type &&
+    normalizeEvidenceType(item.original_type).type !== item.type
+  ).length;
+  const dedupedEvidence = deduplicateEvidence(normalizedEvidence);
+  const rankedEvidence = rankEvidence(dedupedEvidence);
+  const retainedEvidence = rankedEvidence.slice(0, MAX_EVIDENCE_PER_CHUNK);
+  const discardedAfterRanking = Math.max(0, rankedEvidence.length - retainedEvidence.length);
+
+  // Sanitize and clamp topics and recurringThemes to avoid schema rejection
+  const safeTopics = Array.isArray(result?.topics)
+    ? result.topics
+        .filter(t => typeof t === 'string' && t.trim())
+        .map(t => t.trim())
+        .slice(0, 15)
+    : [];
+
+  const safeThemes = Array.isArray(result?.recurringThemes)
+    ? result.recurringThemes
+        .filter(t => typeof t === 'string' && t.trim())
+        .map(t => t.trim())
+        .slice(0, 10)
+    : [];
+
+  const stats = {
+    rawEvidenceItems: rawEvidence.length,
+    deduplicatedEvidenceItems: dedupedEvidence.length,
+    rankedEvidenceItems: rankedEvidence.length,
+    retainedEvidenceItems: retainedEvidence.length,
+    discardedAfterRanking,
+    evidenceOverflowEvents: rawEvidence.length > MAX_EVIDENCE_PER_CHUNK ? 1 : 0,
+    unknownEvidenceTypesNormalized: unknownTypeNormalizations,
+  };
+
+  if (process.env.NODE_ENV !== 'production' && rawEvidence.length !== retainedEvidence.length) {
+    console.log(
+      `[Extraction] ${chunkId || 'chunk'}: raw evidence: ${rawEvidence.length}, ` +
+      `deduplicated: ${dedupedEvidence.length}, ranked: ${rankedEvidence.length}, ` +
+      `retained: ${retainedEvidence.length}`
+    );
+  }
+
+  return {
+    ...result,
+    topics: safeTopics,
+    recurringThemes: safeThemes,
+    evidence: retainedEvidence,
+    _normalization: stats,
+  };
+}
+
+function deduplicateEvidence(items) {
+  const byKey = new Map();
+  for (const item of items) {
+    const key = evidenceKey(item);
+    if (!key) continue;
+    const existing = byKey.get(key);
+    if (!existing || evidenceScore(item) > evidenceScore(existing)) {
+      byKey.set(key, item);
+    }
+  }
+  return [...byKey.values()];
+}
+
+function evidenceKey(item) {
+  const messageId = item.messageId || item.message_id;
+  if (messageId) return `id:${messageId}`;
+
+  const receiptId = item.receiptId || item.receipt_id;
+  if (receiptId) return `receipt:${receiptId}`;
+
+  const text = String(item.message_text || item.text || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  return [
+    item.timestamp || '',
+    item.sender || '',
+    text,
+  ].join('|');
+}
+
+function rankEvidence(items) {
+  return [...items].sort((a, b) => {
+    const scoreDiff = evidenceScore(b) - evidenceScore(a);
+    if (scoreDiff !== 0) return scoreDiff;
+
+    const aTime = Date.parse(a.timestamp || '') || 0;
+    const bTime = Date.parse(b.timestamp || '') || 0;
+    return aTime - bTime;
+  });
+}
+
+function evidenceScore(item) {
+  const typePriority = {
+    callback_candidate: 100,
+    turning_point: 98,
+    contradiction: 96,
+    conflict: 94,
+    rejection: 92,
+    affection: 90,
+    love: 88,
+    flirting: 86,
+    apology: 84,
+    vulnerability: 82,
+    relationship_signal: 80,
+    personality_signal: 78,
+    event: 76,
+    plan: 74,
+    inside_joke: 72,
+    funny: 70,
+    dramatic: 68,
+    memorable: 66,
+    promise: 64,
+    foreshadowing_candidate: 62,
+    self_description: 60,
+    other_description: 58,
+    recurring_language: 75,
+    recurring_topic: 75,
+    emotional_texture_shift: 85,
+    mood_shift: 85,
+    behavior: 30,
+    other: 10,
+  };
+  const importance = Number(item.importance ?? item.confidence ?? item.relevance ?? 0);
+  return (typePriority[item.type] ?? 10) * 1000 + Math.max(0, Math.min(1, importance)) * 100;
 }
 
 /**
@@ -248,7 +397,10 @@ export function validateChunkExtractionEvidence(extraction, chunk) {
       continue;
     }
 
-    const normalizedType = normalizeEvidenceType(item.type);
+    // Prefer the original_type (if present) when normalizing so we preserve
+    // the LLM-provided original value through validation.
+    const typeToNormalize = item.original_type || item.type;
+    const normalizedType = normalizeEvidenceType(typeToNormalize);
 
     if ((item.importance ?? 0) < 0.4) {
       rejections.push({ reason: 'low_importance', messageId: item.messageId, importance: item.importance ?? null });
@@ -267,7 +419,9 @@ export function validateChunkExtractionEvidence(extraction, chunk) {
       importance: item.importance,
       connection: item.connection || '',
     };
-    if (normalizedType.unknown || normalizedType.normalized) {
+    if (item.original_type) {
+      validItem.original_type = item.original_type;
+    } else if (normalizedType.unknown || normalizedType.normalized) {
       validItem.original_type = normalizedType.originalType;
     }
     validEvidence.push(validItem);
@@ -277,10 +431,10 @@ export function validateChunkExtractionEvidence(extraction, chunk) {
     rejections.push({ reason: 'over_max_evidence_items', count: rawItems.length - 20 });
   }
 
-  if (rejections.length > 0) {
-    console.warn(
-      `[Evidence] ${chunk.id}: rejected ${rejections.length} invalid extraction evidence item(s). ` +
-      rejections.map(r => `${r.reason}${r.messageId ? `:${r.messageId}` : ''}`).join(', ')
+  if (rejections.length > 0 || rawItems.length > 0) {
+    console.log(
+      `[Evidence] ${chunk.id || 'chunk'}: raw: ${rawItems.length}, valid: ${validEvidence.length}, rejected: ${rejections.length}` +
+      (rejections.length > 0 ? ` (${rejections.map(r => `${r.reason}${r.messageId ? `:${r.messageId}` : ''}`).join(', ')})` : '')
     );
   }
 
@@ -313,13 +467,23 @@ export function formatEvidenceForPrompt(evidenceStore, maxItems = 80) {
     return 'No evidence items available.';
   }
 
-  // Take top maxItems by importance
-  const selected = evidenceStore.slice(0, maxItems);
+  // Strategy: top-N by importance + guarantee recurring_language items are included
+  // so topics like football/cricket always reach the investigator regardless of rank.
+  const primaryCap = Math.min(maxItems - 20, 60);
+  const topByImportance = evidenceStore.slice(0, primaryCap);
+  const topIds = new Set(topByImportance.map(e => e.messageId));
+
+  // Pull recurring_language items not already in top set (up to 20 guaranteed slots)
+  const recurringItems = evidenceStore
+    .filter(e => e.type === 'recurring_language' && !topIds.has(e.messageId))
+    .slice(0, 20);
+
+  const selected = [...topByImportance, ...recurringItems];
 
   // Sort chronologically for timeline understanding
-  const chronological = [...selected].sort((a, b) => {
-    return new Date(a.timestamp || 0) - new Date(b.timestamp || 0);
-  });
+  const chronological = [...selected].sort((a, b) =>
+    new Date(a.timestamp || 0) - new Date(b.timestamp || 0)
+  );
 
   return chronological.map(item => {
     const ts = item.timestamp ? item.timestamp.replace('T', ' ').slice(0, 16) : 'unknown date';
@@ -327,8 +491,9 @@ export function formatEvidenceForPrompt(evidenceStore, maxItems = 80) {
       `[${item.messageId}] ${ts} | ${item.sender || 'Unknown'} (${item.type}, imp=${item.importance})`,
       `  "${item.text}"`,
     ];
-    if (item.potentialConnections && item.potentialConnections.length > 0) {
-      lines.push(`  → connection hint: ${item.potentialConnections.join(' | ')}`);
+    // Always include connection for recurring_language — it names the topic
+    if (item.connection) {
+      lines.push(`  → ${item.connection}`);
     }
     return lines.join('\n');
   }).join('\n\n');

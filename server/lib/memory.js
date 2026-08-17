@@ -16,7 +16,7 @@ import { estimateObjectTokens, MAX_MEMORY_TOKENS } from './tokenEstimator.js';
 // ─── Memory Size Caps ─────────────────────────────────────────────────────────
 
 const MAX_PERIODS = 30;
-const MAX_GLOBAL_TOPICS = 25;
+const MAX_GLOBAL_TOPICS = 40;
 const MAX_GLOBAL_EVENTS = 50;
 const MAX_GLOBAL_MOMENTS = 30;
 const MAX_GLOBAL_PATTERNS = 20;
@@ -39,7 +39,22 @@ export function buildCompactMemory(extractions, chunks, metadata, extractionMeta
 
   // ── 2. Aggregate + deduplicate globally ─────────────────────────────────────
   const globalTopics = deduplicateStrings(
-    extractions.flatMap(e => e.topics || []),
+    [
+      // Primary: topics array from each extraction
+      ...extractions.flatMap(e => e.topics || []),
+      // Secondary: extract topic names from recurring_language evidence connection fields
+      // e.g. connection: "football discussed across multiple messages — match scores, team predictions"
+      ...extractions.flatMap(e =>
+        (e.evidence || [])
+          .filter(ev => ev.type === 'recurring_language' && ev.connection)
+          .map(ev => {
+            // Extract the subject name from the start of the connection string
+            const match = ev.connection.match(/^([^—\-:]+)/i);
+            return match ? match[1].trim() : ev.connection.slice(0, 40).trim();
+          })
+          .filter(t => t.length > 2)
+      ),
+    ],
     MAX_GLOBAL_TOPICS
   );
 
@@ -260,7 +275,7 @@ function normalizeKey(str) {
     .trim()
     .split(' ')
     .filter(w => w.length > 2) // remove short words like "the", "a", "is"
-    .slice(0, 8)
+    .slice(0, 4)               // 4 words = less aggressive, won't merge "football match discussion" + "football match prediction"
     .join(' ');
 }
 

@@ -69,102 +69,107 @@ export function truncateMessageIfOversized(msg: ChatMessage): ChatMessage {
   return { ...msg, text: msg.text.slice(0, lo) + ' [truncated]' };
 }
 
+export function splitMessagesByTokenWeight<T extends { id: string; sender: string | null; timestamp?: Date | string; text: string }>(
+  messages: T[]
+): [T[], T[]] {
+  if (!messages || messages.length <= 1) {
+    return [messages || [], []];
+  }
+
+  const costs = messages.map(m => estimateMessageTokens(m));
+  const totalCost = costs.reduce((sum, c) => sum + c, 0);
+  const halfCost = totalCost / 2;
+
+  let accumulated = 0;
+  let splitIndex = 1;
+  let bestDiff = Infinity;
+
+  for (let i = 0; i < messages.length - 1; i++) {
+    accumulated += costs[i];
+    const diff = Math.abs(accumulated - halfCost);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      splitIndex = i + 1;
+    }
+  }
+
+  splitIndex = Math.max(1, Math.min(splitIndex, messages.length - 1));
+
+  return [
+    messages.slice(0, splitIndex),
+    messages.slice(splitIndex),
+  ];
+}
+
 // ─── Chunker ─────────────────────────────────────────────────────────────────
 
 export function createAnalysisChunks(
   messages: ChatMessage[],
   _sessions: ConversationSession[],
-  maxTokensPerChunk: number = MAX_MESSAGE_PAYLOAD_TOKENS
+  _maxTokensPerChunk: number = MAX_MESSAGE_PAYLOAD_TOKENS,
+  options: { topLevelChunkCount?: number } = {}
 ): AnalysisChunk[] {
+  const targetTopLevel = options.topLevelChunkCount ?? 20;
   const normalMessages = messages
     .filter(m => m.type === 'message' && m.text && m.text.trim().length > 0)
     .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
   if (normalMessages.length === 0) return [];
 
-  // ── 1. Group into sessions by 2h gap ────────────────────────────────────
-  const sessionGroups: ChatMessage[][] = [];
-  let currentGroup: ChatMessage[] = [normalMessages[0]];
-
+  // Group messages into natural conversation sessions (2-hour silence gap)
+  const sessionList: ChatMessage[][] = [];
+  let cur: ChatMessage[] = [normalMessages[0]];
   for (let i = 1; i < normalMessages.length; i++) {
-    const prev = normalMessages[i - 1];
-    const curr = normalMessages[i];
-    const gap = curr.timestamp.getTime() - prev.timestamp.getTime();
-    if (gap <= SESSION_GAP_MS) {
-      currentGroup.push(curr);
+    const prev = normalMessages[i - 1].timestamp.getTime();
+    const curr = normalMessages[i].timestamp.getTime();
+    if (curr - prev > SESSION_GAP_MS) {
+      sessionList.push(cur);
+      cur = [normalMessages[i]];
     } else {
-      sessionGroups.push(currentGroup);
-      currentGroup = [curr];
+      cur.push(normalMessages[i]);
     }
   }
-  if (currentGroup.length > 0) sessionGroups.push(currentGroup);
+  if (cur.length > 0) sessionList.push(cur);
 
-  // ── 2. Pack sessions token-by-token ──────────────────────────────────────
+  // Evenly sample up to targetTopLevel sessions across the entire timeline
+  // (guarantees coverage from day 1 to the most recent messages)
+  const sampledSessions: ChatMessage[][] = [];
+  if (sessionList.length <= targetTopLevel) {
+    sampledSessions.push(...sessionList);
+  } else {
+    for (let i = 0; i < targetTopLevel; i++) {
+      const idx = Math.floor((i / (targetTopLevel - 1)) * (sessionList.length - 1));
+      sampledSessions.push(sessionList[idx]);
+    }
+  }
+
+  // Create exactly 1 AnalysisChunk per sampled session (bounded to 60 msgs max)
   const chunks: AnalysisChunk[] = [];
-  let currentMessages: ChatMessage[] = [];
-  let currentTokens = 0;
-  let currentSessionIds: string[] = [];
-  let chunkIndex = 0;
-  let oversizedCount = 0;
+  for (let i = 0; i < sampledSessions.length; i++) {
+    const sess = sampledSessions[i];
+    const msgsSlice = sess.length > 60 ? sess.slice(0, 60) : sess;
+    const sorted = [...msgsSlice].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+    const participants = [...new Set(sorted.map(m => m.sender).filter(Boolean))] as string[];
 
-  const finalize = () => {
-    if (currentMessages.length === 0) return;
-    chunks.push(buildChunk(chunkIndex, currentSessionIds, currentMessages));
-    chunkIndex++;
-    currentMessages = [];
-    currentTokens = 0;
-    currentSessionIds = [];
-  };
-
-  for (let si = 0; si < sessionGroups.length; si++) {
-    const sessionId = `session_${si + 1}`;
-
-    for (const rawMsg of sessionGroups[si]) {
-      const msg = truncateMessageIfOversized(rawMsg);
-      const msgTokens = estimateMessageTokens(msg);
-
-      if (msgTokens > maxTokensPerChunk) {
-        if (currentMessages.length > 0) finalize();
-        oversizedCount++;
-        console.warn(
-          `[Chunker] Single message ${msg.id} exceeds budget (${msgTokens} > ${maxTokensPerChunk}). Isolated.`
-        );
-        currentMessages.push(msg);
-        currentTokens += msgTokens;
-        if (!currentSessionIds.includes(sessionId)) currentSessionIds.push(sessionId);
-        finalize();
-        continue;
-      }
-
-      const wouldExceedTokens = currentTokens + msgTokens > maxTokensPerChunk;
-      const wouldExceedCount = currentMessages.length >= MAX_MESSAGES_PER_CHUNK;
-
-      if (currentMessages.length > 0 && (wouldExceedTokens || wouldExceedCount)) {
-        finalize();
-      }
-
-      currentMessages.push(msg);
-      currentTokens += msgTokens;
-      if (!currentSessionIds.includes(sessionId)) {
-        currentSessionIds.push(sessionId);
-      }
-    }
-  }
-
-  finalize();
-
-  // ── 3. Telemetry ──────────────────────────────────────────────────────────
-  for (const chunk of chunks) {
-    const firstId = chunk.messages[0]?.id ?? '?';
-    const lastId = chunk.messages[chunk.messages.length - 1]?.id ?? '?';
-    const estTokens = estimateChunkPayloadTokens(chunk.messages as any);
-    console.log(
-      `[Chunker] ${chunk.id} | ${chunk.messages.length} msgs | ~${estTokens} msg tokens (~${estTokens + PROMPT_OVERHEAD_TOKENS} total) | ${firstId} → ${lastId}`
-    );
+    chunks.push({
+      id: `chunk_${i + 1}`,
+      startAt: sorted[0]?.timestamp?.toISOString() || '',
+      endAt: sorted[sorted.length - 1]?.timestamp?.toISOString() || '',
+      sessionIds: [],
+      participants,
+      messages: sorted.map(m => ({
+        id: m.id,
+        timestamp: m.timestamp?.toISOString() || '',
+        sender: m.sender,
+        text: m.text,
+        type: m.type,
+      })),
+    });
   }
 
   console.log(
-    `[Chunker] Created ${chunks.length} extraction chunks | Total messages: ${normalMessages.length} | Oversized single messages: ${oversizedCount}`
+    `[Chunker] Timeline sampling: ${normalMessages.length} messages (${sessionList.length} sessions) ` +
+    `→ ${chunks.length} representative timeline chunks (~${Math.round(chunks.reduce((s, c) => s + c.messages.length, 0) / chunks.length)} msgs each).`
   );
 
   return chunks;

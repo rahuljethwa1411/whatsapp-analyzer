@@ -11,6 +11,7 @@ interface FinalVerdictProps {
   overallTone: string;
   totalMessagesStr: string;
   durationDays: number;
+  onDownloadPdf?: () => void;
 }
 
 export function FinalVerdict({
@@ -18,6 +19,7 @@ export function FinalVerdict({
   overallTone,
   totalMessagesStr,
   durationDays,
+  onDownloadPdf,
 }: FinalVerdictProps) {
   const verdictTitle = verdict?.title || 'ABSOLUTELY COOKED';
   const verdictBadge = verdict?.badge || 'VERIFIED CHAOS';
@@ -45,6 +47,14 @@ export function FinalVerdict({
           <p className="verdict-punchline">
             "You came looking for the lore. Turns out, you were the lore."
           </p>
+
+          {onDownloadPdf && (
+            <div className="verdict-pdf-download-row">
+              <button type="button" className="button verdict-download-pdf-btn" onClick={onDownloadPdf}>
+                📥 Download Official Classified PDF Dossier (6 Pages)
+              </button>
+            </div>
+          )}
         </div>
       </FadeReveal>
     </section>

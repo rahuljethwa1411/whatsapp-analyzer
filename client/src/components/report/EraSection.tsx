@@ -12,9 +12,10 @@ interface EraSectionProps {
   eras: StoryEra[];
   getMessagesByIds: (ids: string[]) => ChatMessage[];
   isUnlocked: boolean;
+  onUnlock?: () => void;
 }
 
-export function EraSection({ eras, getMessagesByIds, isUnlocked }: EraSectionProps) {
+export function EraSection({ eras, getMessagesByIds, isUnlocked, onUnlock }: EraSectionProps) {
   if (!eras || eras.length === 0) return null;
 
   const displayEras = isUnlocked ? eras : eras.slice(0, 2);
@@ -58,10 +59,37 @@ export function EraSection({ eras, getMessagesByIds, isUnlocked }: EraSectionPro
           </FadeReveal>
         ))}
 
-        {!isUnlocked && eras.length > 2 && (
-          <div className="eras-locked-notice">
-            <p>+{eras.length - 2} further eras unlocked in full report.</p>
-          </div>
+        {/* Cliffhanger Era 3 Teaser in Preview Mode */}
+        {!isUnlocked && eras[2] && (
+          <FadeReveal>
+            <div className="era-card story-chapter-teaser">
+              <div className="era-header-row">
+                <span className="era-number">ERA 03</span>
+                <span className="era-dates">
+                  {formatDate(eras[2].startAt)} → {formatDate(eras[2].endAt)}
+                </span>
+                <span className="chapter-locked-badge">🔒 LOCKED ERA</span>
+              </div>
+              <h3 className="era-title">{eras[2].title}</h3>
+              <div className="teaser-narrative-wrapper">
+                <p className="era-summary teaser-text">
+                  {eras[2].summary.slice(0, 140)}...
+                </p>
+                <div className="teaser-blur-overlay">
+                  <div className="teaser-cta-content">
+                    <span className="teaser-lock-icon">🔒</span>
+                    <p className="teaser-headline">+{eras.length - 2} more relationship eras documented in full archive.</p>
+                    <small>Unlock deep 100–250 word breakdowns, dominant topics & verified receipts</small>
+                    {onUnlock && (
+                      <button type="button" className="button teaser-unlock-btn" onClick={onUnlock}>
+                        Unlock Full 6-Page Dossier (₹549) <span>→</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </FadeReveal>
         )}
       </div>
     </section>

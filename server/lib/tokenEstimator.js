@@ -1,3 +1,11 @@
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config();
+
 /**
  * Token Estimator
  *
@@ -25,62 +33,50 @@
  * We use 600 as a conservative (generous) buffer so every chunk's full
  * formatted user prompt stays safely under MAX_EXTRACTION_INPUT_TOKENS.
  */
-export const PROMPT_OVERHEAD_TOKENS = 600;
-
-/**
- * Maximum tokens for the FULL extraction user prompt
- * (raw message block + all prompt framing).
- *
- * Set to 4000. With the system prompt (~250 tokens) and output (1200 tokens),
- * the total Groq request stays ~5450 tokens — well within the model's 8192
- * context window and the 6000 TPM rate limit.
- *
- * Override with MAX_EXTRACTION_INPUT_TOKENS env var.
- */
-export const MAX_EXTRACTION_INPUT_TOKENS = parseInt(
-  process.env.MAX_EXTRACTION_INPUT_TOKENS || '4000',
+export const TOP_LEVEL_CHUNK_COUNT = parseInt(
+  process.env.TOP_LEVEL_CHUNK_COUNT || '20',
   10
 );
 
-/**
- * Effective token budget for the RAW MESSAGE BLOCK only inside one chunk.
- * = MAX_EXTRACTION_INPUT_TOKENS - PROMPT_OVERHEAD_TOKENS
- *
- * The chunker uses this number when packing messages so that the full
- * formatted prompt never exceeds MAX_EXTRACTION_INPUT_TOKENS.
- */
+export const MAX_RECOVERY_DEPTH = parseInt(
+  process.env.MAX_RECOVERY_DEPTH || '4',
+  10
+);
+
+export const MAX_CONCURRENT_EXTRACTIONS = Math.max(
+  1,
+  parseInt(process.env.MAX_CONCURRENT_EXTRACTIONS || '2', 10)
+);
+
+export const GROQ_TPM_BUDGET = parseInt(
+  process.env.GROQ_TPM_BUDGET || '12000',
+  10
+);
+
+export const PROMPT_OVERHEAD_TOKENS = 600;
+
+export const MAX_EXTRACTION_INPUT_TOKENS = parseInt(
+  process.env.MAX_EXTRACTION_INPUT_TOKENS || '6000',
+  10
+);
+
 export const MAX_MESSAGE_PAYLOAD_TOKENS =
   MAX_EXTRACTION_INPUT_TOKENS - PROMPT_OVERHEAD_TOKENS;
 
-/**
- * Hard maximum message count per chunk.
- * Prevents any single chunk from being unreasonably large even if
- * individual messages are very short.
- */
-export const MAX_MESSAGES_PER_CHUNK = 120;
+export const MAX_MESSAGES_PER_CHUNK = 2500;
 
-/**
- * Maximum total extraction chunks allowed per chat analysis.
- * This is now a WARNING threshold only — NOT a hard downsampling cap.
- * Messages are never discarded to meet this limit.
- */
-export const MAX_EXTRACTION_CHUNKS = 60;
+export const MAX_EXTRACTION_CHUNKS = 40;
 
-/**
- * If a single message exceeds this many tokens it gets truncated.
- * Protects against pathological messages (e.g. someone pasted an essay).
- */
 export const MAX_SINGLE_MESSAGE_TOKENS = 500;
 
-/**
- * Max tokens for the compact ChatMemory sent to the synthesis model.
- * Synthesis system prompt + output add ~3k–5k on top.
- */
 export const MAX_MEMORY_TOKENS = 12000;
-export const EXTRACTION_INPUT_SAFETY_RATIO = 0.82;
-export const SAFE_EXTRACTION_INPUT_TOKENS = Math.floor(
-  MAX_EXTRACTION_INPUT_TOKENS * EXTRACTION_INPUT_SAFETY_RATIO
-);
+
+export const EXTRACTION_INPUT_SAFETY_RATIO = 0.85;
+
+export const SAFE_EXTRACTION_INPUT_TOKENS = parseInt(
+  process.env.SAFE_EXTRACTION_INPUT_TOKENS || '',
+  10
+) || Math.floor(MAX_EXTRACTION_INPUT_TOKENS * EXTRACTION_INPUT_SAFETY_RATIO);
 
 // ─── Core Estimator ──────────────────────────────────────────────────────────
 
@@ -190,35 +186,7 @@ export function estimateObjectTokens(obj) {
 
 export function estimateExtractionRequest(request) {
   const serializedRequest = JSON.stringify(request);
-  const messages = Array.isArray(request?.messages) ? request.messages : [];
-
-  let conversationalTokens = 0;
-  for (const message of messages) {
-    conversationalTokens += estimateTokens(String(message?.role || ''));
-    conversationalTokens += estimateTokens(String(message?.content || ''));
-    // ChatML-like framing overhead. Groq's exact tokenizer is not available
-    // locally, so this is a documented conservative allowance per message.
-    conversationalTokens += 8;
-  }
-
-  const tokenRelevantRequest = {
-    ...request,
-    messages: messages.map(message => ({
-      role: message?.role || '',
-      content: '',
-    })),
-  };
-  const structuralTokens = estimateTokens(JSON.stringify(tokenRelevantRequest));
-  const escapingOverheadTokens = Math.ceil(
-    Math.max(0, serializedRequest.length - messages.reduce(
-      (sum, message) => sum + String(message?.content || '').length,
-      0
-    )) / 4
-  );
-
-  const estimatedInputTokens = Math.ceil(
-    (conversationalTokens + structuralTokens + escapingOverheadTokens) * 1.18
-  );
+  const estimatedInputTokens = estimateTokens(serializedRequest);
 
   return {
     estimatedInputTokens,
@@ -226,6 +194,6 @@ export function estimateExtractionRequest(request) {
     maxInputTokens: MAX_EXTRACTION_INPUT_TOKENS,
     safe: estimatedInputTokens <= SAFE_EXTRACTION_INPUT_TOKENS,
     totalSerializedRequestChars: serializedRequest.length,
-    messageCount: messages.length,
+    messageCount: Array.isArray(request?.messages) ? request.messages.length : 0,
   };
 }

@@ -20,6 +20,7 @@ import { AwardsSection } from './AwardsSection';
 import { WrappedSection } from './WrappedSection';
 import { FinalVerdict } from './FinalVerdict';
 import { PreviewGate } from './PreviewGate';
+import { exportPdfDossier } from '../../lib/pdfExporter';
 
 import { useChatAnalysis } from '../../context/ChatAnalysisContext';
 import { useIntelligence } from '../../context/IntelligenceContext';
@@ -29,10 +30,29 @@ export function ReportShell() {
   const [isContactOpen, setIsContactOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [scrollProgress, setScrollProgress] = useState(0);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   const { analysis } = useChatAnalysis();
   const { intelligence, getMessagesByIds } = useIntelligence();
   const { story, generateStory, accessMode, setAccessMode } = useStory();
+
+  const handleDownloadPdf = async () => {
+    if (isExportingPdf) return;
+    try {
+      setIsExportingPdf(true);
+      await exportPdfDossier({
+        story,
+        intelligence,
+        analysis,
+        getMessagesByIds,
+      });
+    } catch (err) {
+      console.error('[PDF Export] Failed to generate dossier:', err);
+      alert('Failed to generate PDF dossier. Please try again.');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
 
   // Generate/update story whenever intelligence or analysis is loaded
   useEffect(() => {
@@ -63,7 +83,7 @@ export function ReportShell() {
 
   const unlockedCount = intelligence
     ? {
-        eras: intelligence.eras.length,
+        eras: Math.max(0, intelligence.eras.length - 2),
         characters: intelligence.characters.length,
         lore: intelligence.lore.length,
         twists: intelligence.plotTwists.length,
@@ -85,56 +105,30 @@ export function ReportShell() {
           durationDays={durationDays}
           onShare={() => setIsShareOpen(true)}
           onUnlock={() => setAccessMode('full')}
+          onDownloadPdf={handleDownloadPdf}
           isUnlocked={isUnlocked}
         />
 
-        {/* 02. SNAPSHOT */}
+        {/* 02. SNAPSHOT (Free) */}
         <ChatSnapshot analysis={analysis} />
 
-        {/* 03. COMPLETE STORY */}
+        {/* 03. COMPLETE STORY (Shows 2 Chapters in Free, 10 in Full) */}
         <StorySection
           story={story}
           getMessagesByIds={getMessagesByIds}
           isUnlocked={isUnlocked}
+          onUnlock={() => setAccessMode('full')}
         />
 
-        {/* 04. STORY ERAS */}
+        {/* 04. STORY ERAS (Shows 2 Eras in Free, All in Full) */}
         <EraSection
           eras={intelligence?.eras || []}
           getMessagesByIds={getMessagesByIds}
           isUnlocked={isUnlocked}
+          onUnlock={() => setAccessMode('full')}
         />
 
-        {/* 05. CHARACTERS */}
-        <CharacterSection
-          characters={intelligence?.characters || []}
-          participantStats={analysis?.participants || []}
-          getMessagesByIds={getMessagesByIds}
-          isUnlocked={isUnlocked}
-        />
-
-        {/* 06. PLOT TWISTS */}
-        <PlotTwistSection
-          twists={intelligence?.plotTwists || []}
-          getMessagesByIds={getMessagesByIds}
-          isUnlocked={isUnlocked}
-        />
-
-        {/* 07. LORE */}
-        <LoreSection
-          lore={intelligence?.lore || []}
-          getMessagesByIds={getMessagesByIds}
-          isUnlocked={isUnlocked}
-        />
-
-        {/* 08. AWARDS */}
-        <AwardsSection
-          awards={story?.awards || []}
-          getMessagesByIds={getMessagesByIds}
-          isUnlocked={isUnlocked}
-        />
-
-        {/* PREVIEW GATE BANNER (if in preview mode) */}
+        {/* PREVIEW GATE / PAYWALL BANNER (Shown immediately after 2 free eras) */}
         {!isUnlocked && (
           <PreviewGate
             onUnlock={() => setAccessMode('full')}
@@ -142,16 +136,51 @@ export function ReportShell() {
           />
         )}
 
-        {/* 09. WRAPPED */}
-        <WrappedSection analysis={analysis} />
+        {/* 👑 PREMIUM-ONLY SECTIONS (Unlocked in Full 5-6 Page Dossier) */}
+        {isUnlocked && (
+          <>
+            {/* 05. CHARACTERS */}
+            <CharacterSection
+              characters={intelligence?.characters || []}
+              participantStats={analysis?.participants || []}
+              getMessagesByIds={getMessagesByIds}
+              isUnlocked={isUnlocked}
+            />
 
-        {/* 10. FINAL VERDICT */}
-        <FinalVerdict
-          verdict={story?.verdict || null}
-          overallTone={overallTone}
-          totalMessagesStr={totalMsgsStr}
-          durationDays={durationDays}
-        />
+            {/* 06. PLOT TWISTS */}
+            <PlotTwistSection
+              twists={intelligence?.plotTwists || []}
+              getMessagesByIds={getMessagesByIds}
+              isUnlocked={isUnlocked}
+            />
+
+            {/* 07. LORE & INSIDE JOKES */}
+            <LoreSection
+              lore={intelligence?.lore || []}
+              getMessagesByIds={getMessagesByIds}
+              isUnlocked={isUnlocked}
+            />
+
+            {/* 08. AWARDS */}
+            <AwardsSection
+              awards={story?.awards || []}
+              getMessagesByIds={getMessagesByIds}
+              isUnlocked={isUnlocked}
+            />
+
+            {/* 09. WRAPPED */}
+            <WrappedSection analysis={analysis} />
+
+            {/* 10. FINAL VERDICT */}
+            <FinalVerdict
+              verdict={story?.verdict || null}
+              overallTone={overallTone}
+              totalMessagesStr={totalMsgsStr}
+              durationDays={durationDays}
+              onDownloadPdf={handleDownloadPdf}
+            />
+          </>
+        )}
       </main>
 
       <Footer onOpenContact={() => setIsContactOpen(true)} />

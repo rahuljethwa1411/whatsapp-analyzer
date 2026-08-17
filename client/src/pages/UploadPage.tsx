@@ -47,7 +47,7 @@ export function UploadPage() {
     resetAnalysis,
   } = useChatAnalysis();
 
-  const hasImportedFile = Boolean(file || (calculatedAnalysis && !isUsingMock));
+  const hasImportedFile = Boolean(file);
 
   const handleResetFile = () => {
     setFile(null);

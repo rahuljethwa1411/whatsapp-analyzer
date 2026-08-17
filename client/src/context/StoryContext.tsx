@@ -94,9 +94,9 @@ export function StoryProvider({ children }: { children: ReactNode }) {
           topWords: analysis.words.topWords?.slice(0, 10).map((w) => w.word) ?? [],
         };
 
-        // 25 second timeout for 70B story generation
+        // 60 second timeout for 70B full 10-chapter story generation
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 25000);
+        const timeoutId = setTimeout(() => controller.abort(), 60000);
 
         const res = await fetch('/api/story', {
           method: 'POST',

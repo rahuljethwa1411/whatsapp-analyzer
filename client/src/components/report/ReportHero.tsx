@@ -11,6 +11,7 @@ interface ReportHeroProps {
   durationDays: number;
   onShare: () => void;
   onUnlock?: () => void;
+  onDownloadPdf?: () => void;
   isUnlocked: boolean;
 }
 
@@ -20,6 +21,7 @@ export function ReportHero({
   durationDays,
   onShare,
   onUnlock,
+  onDownloadPdf,
   isUnlocked,
 }: ReportHeroProps) {
   return (
@@ -58,7 +60,12 @@ export function ReportHero({
         <div className="hero-action-row">
           {!isUnlocked && onUnlock && (
             <button type="button" className="button hero-unlock-btn" onClick={onUnlock}>
-              Unlock Full Archive 🔓
+              Unlock Full 6-Page Dossier (₹549) 🔓
+            </button>
+          )}
+          {isUnlocked && onDownloadPdf && (
+            <button type="button" className="button hero-download-pdf-btn" onClick={onDownloadPdf}>
+              📥 Download 6-Page Case File (PDF)
             </button>
           )}
           <button type="button" className="text-button hero-share-btn" onClick={onShare}>

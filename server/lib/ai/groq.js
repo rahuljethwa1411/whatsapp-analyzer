@@ -1,5 +1,7 @@
 import Groq from 'groq-sdk';
 import { AIProvider } from './provider.js';
+import { estimateExtractionRequest } from '../tokenEstimator.js';
+import { TokenAwareRequestQueue } from './tokenQueue.js';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -49,18 +51,42 @@ export class RequestTooLargeError extends Error {
 // ─── Token Telemetry ─────────────────────────────────────────────────────────
 
 const telemetry = {
+  originalLogicalChunks: 0,
+  successfulLogicalChunks: 0,
+  recoveredLogicalChunks: 0,
+  partiallyRecoveredChunks: 0,
+  failedLogicalChunks: 0,
+  apiRequests: 0,
+  apiRetries: 0,
+  failedRequests: 0,
+  cacheHits: 0,
+  inputTokensEstimated: 0,
+  inputTokensActual: 0,
+  outputTokensActual: 0,
   extractionInputTokens: 0,
   extractionOutputTokens: 0,
   synthesisInputTokens: 0,
   synthesisOutputTokens: 0,
   totalRequests: 0,
   totalRetries: 0,
-  failedRequests: 0,
   rateLimitHits: 0,
   requestTooLargeHits: 0,
   recoverySplits: 0,
   schemaNormalizationEvents: 0,
   unknownEvidenceTypesNormalized: 0,
+  evidenceOverflowEvents: 0,
+  evidenceItemsDiscardedAfterRanking: 0,
+  tpmBudget: 0,
+  tpmTokensReserved: 0,
+  tpmTokensAvailable: 0,
+  requestsDelayedByTpm: 0,
+  tpmQueueWaits: 0,
+  totalTpmQueueWaitMs: 0,
+  tpm429Retries: 0,
+  totalQueueWaitMs: 0,
+  maxQueueWaitMs: 0,
+  queuedRequestsStarted: 0,
+  activeExtractionRequests: 0,
 };
 
 export function getTokenTelemetry() {
@@ -71,19 +97,95 @@ export function resetTokenTelemetry() {
   Object.keys(telemetry).forEach(k => (telemetry[k] = 0));
 }
 
-// A recovery retry is always a smaller payload, never a repeated oversized one.
 export function recordExtractionRecoverySplit() {
   telemetry.recoverySplits++;
-  telemetry.totalRetries++;
 }
 
 export function recordExtractionSizeLimitHit() {
   telemetry.requestTooLargeHits++;
 }
 
+export function recordExtractionCacheHit() {
+  telemetry.cacheHits++;
+}
+
+export function recordPartiallyRecoveredChunk() {
+  telemetry.partiallyRecoveredChunks++;
+}
+
 export function recordExtractionSchemaNormalization(count = 1) {
   telemetry.schemaNormalizationEvents++;
   telemetry.unknownEvidenceTypesNormalized += count;
+}
+
+export function recordExtractionEvidenceOverflow(events = 0, discarded = 0) {
+  telemetry.evidenceOverflowEvents += events;
+  telemetry.evidenceItemsDiscardedAfterRanking += discarded;
+}
+
+function recordQueueStart(event) {
+  telemetry.tpmBudget = event.snapshot.tpmBudget;
+  telemetry.tpmTokensReserved = event.snapshot.reservedTokens;
+  telemetry.tpmTokensAvailable = event.snapshot.availableTokens;
+  telemetry.activeExtractionRequests = event.snapshot.activeRequests;
+  telemetry.totalQueueWaitMs += event.waitMs || 0;
+  telemetry.maxQueueWaitMs = Math.max(telemetry.maxQueueWaitMs, event.waitMs || 0);
+  telemetry.queuedRequestsStarted++;
+}
+
+function recordQueueWait(event) {
+  telemetry.tpmBudget = event.snapshot.tpmBudget;
+  telemetry.tpmTokensReserved = event.snapshot.reservedTokens;
+  telemetry.tpmTokensAvailable = event.snapshot.availableTokens;
+  telemetry.activeExtractionRequests = event.snapshot.activeRequests;
+  telemetry.requestsDelayedByTpm++;
+  telemetry.tpmQueueWaits++;
+  telemetry.totalTpmQueueWaitMs += event.waitMs || 0;
+}
+
+function recordQueueRelease(event) {
+  telemetry.tpmBudget = event.snapshot.tpmBudget;
+  telemetry.tpmTokensReserved = event.snapshot.reservedTokens;
+  telemetry.tpmTokensAvailable = event.snapshot.availableTokens;
+  telemetry.activeExtractionRequests = event.snapshot.activeRequests;
+}
+
+let extractionQueue = null;
+
+function getExtractionQueue() {
+  const maxConcurrent = parseInt(process.env.MAX_CONCURRENT_EXTRACTIONS || '2', 10);
+  const tokenBudget = parseInt(process.env.GROQ_TPM_BUDGET || '12000', 10);
+  const windowMs = parseInt(process.env.GROQ_TPM_WINDOW_MS || '60000', 10);
+
+  if (
+    !extractionQueue ||
+    extractionQueue.maxConcurrent !== Math.max(1, maxConcurrent) ||
+    extractionQueue.tokenBudget !== Math.max(1, tokenBudget) ||
+    extractionQueue.windowMs !== Math.max(1, windowMs)
+  ) {
+    extractionQueue = new TokenAwareRequestQueue({
+      maxConcurrent,
+      tokenBudget,
+      windowMs,
+      onEvent: event => {
+        if (event.type === 'wait') {
+          recordQueueWait(event);
+          console.log(
+            `⏳ [TPM-QUEUE] ${event.label} waiting for budget (needs ~${event.requestedTokens} tokens, available: ${event.snapshot.availableTokens}, active: ${event.snapshot.activeRequests}/${event.snapshot.maxConcurrent})`
+          );
+        } else if (event.type === 'start') {
+          recordQueueStart(event);
+          console.log(
+            `⚡ [TPM-QUEUE] ${event.label} dispatched (reserved ~${event.reservedTokens} tokens, available: ${event.snapshot.availableTokens}, active: ${event.snapshot.activeRequests}/${event.snapshot.maxConcurrent})`
+          );
+        } else if (event.type === 'release') {
+          recordQueueRelease(event);
+        }
+      },
+    });
+  }
+
+  return extractionQueue;
 }
 
 // ─── GroqProvider ─────────────────────────────────────────────────────────────
@@ -109,7 +211,8 @@ export class GroqProvider extends AIProvider {
     if (!apiKey || apiKey === 'your_groq_api_key_here') {
       throw new Error('GROQ_API_KEY is not configured. Set it in server/.env');
     }
-    this.groq = new Groq({ apiKey });
+    const baseURL = process.env.GROQ_BASE_URL || undefined;
+    this.groq = new Groq({ apiKey, baseURL });
 
     // Two configurable model tiers
     const legacyDefault = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
@@ -131,9 +234,10 @@ export class GroqProvider extends AIProvider {
    *   tier?: 'extraction' | 'synthesis',
    *   model?: string,
    *   maxOutputTokens?: number,
+   *   temperature?: number,
    * }} options
    */
-  async complete({ systemPrompt, userPrompt, schema, tier, model, maxOutputTokens }) {
+  async complete({ systemPrompt, userPrompt, schema, tier, model, maxOutputTokens, temperature }) {
     // Resolve model: explicit override > tier default > synthesis default
     let useModel = model;
     if (!useModel) {
@@ -142,6 +246,9 @@ export class GroqProvider extends AIProvider {
     }
 
     const maxTokens = maxOutputTokens ?? 4096;
+    const defaultTemp = tier === 'extraction' ? 0.1 : 0.75;
+    const temp = typeof temperature === 'number' ? temperature : defaultTemp;
+
     return this.completeRequest({
       request: {
         model: useModel,
@@ -149,7 +256,7 @@ export class GroqProvider extends AIProvider {
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        temperature: tier === 'extraction' ? 0.1 : 0.3,
+        temperature: temp,
         max_tokens: maxTokens,
         response_format: { type: 'json_object' },
       },
@@ -158,14 +265,28 @@ export class GroqProvider extends AIProvider {
     });
   }
 
-  async completeRequest({ request, schema, tier }) {
+  async completeRequest({ request, schema, tier, queueLabel, normalizeResult }) {
     const useModel = request.model;
     let lastError = null;
+    let tokenInfo = null;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       telemetry.totalRequests++;
+      let queueReservation = null;
 
       try {
+        if (tier === 'extraction') {
+          tokenInfo = estimateExtractionRequest(request);
+          // Reserve input + expected output tokens — Groq TPM counts both.
+          // max_tokens defaults to 4096 if unset; use actual value when present.
+          const expectedOutputTokens = request.max_tokens ?? 1200;
+          const totalReservation = tokenInfo.estimatedInputTokens + expectedOutputTokens;
+          queueReservation = await getExtractionQueue().acquire(
+            totalReservation,
+            queueLabel || useModel
+          );
+        }
+
         const response = await this.groq.chat.completions.create(request);
 
         // ── Record actual token usage from response ───────────────────────
@@ -178,6 +299,19 @@ export class GroqProvider extends AIProvider {
             telemetry.synthesisInputTokens += usage.prompt_tokens ?? 0;
             telemetry.synthesisOutputTokens += usage.completion_tokens ?? 0;
           }
+        }
+
+        // Reconcile queue reservation based on actual total tokens used
+        if (queueReservation) {
+          const actualTokens = usage
+            ? (usage.prompt_tokens ?? 0) + (usage.completion_tokens ?? 0)
+            : (tokenInfo?.estimatedInputTokens ?? null);
+          try {
+            queueReservation.release(actualTokens);
+          } catch (e) {
+            // Best-effort
+          }
+          queueReservation = null;
         }
 
         const content = response.choices?.[0]?.message?.content;
@@ -198,8 +332,13 @@ export class GroqProvider extends AIProvider {
           }
         }
 
+        const resultForValidation =
+          typeof normalizeResult === 'function'
+            ? normalizeResult(parsed, queueLabel)
+            : parsed;
+
         // Zod validation
-        const validated = schema.parse(parsed);
+        const validated = schema.parse(resultForValidation);
         return validated;
 
       } catch (err) {
@@ -209,6 +348,19 @@ export class GroqProvider extends AIProvider {
         logGroqErrorDebug(err, request, tier);
 
         // ── Classify error ────────────────────────────────────────────────
+
+        // Model not found (404) — abort immediately, do NOT retry
+        if (
+          status === 404 ||
+          errMsg.includes('model_not_found') ||
+          errMsg.includes('does not exist') ||
+          errMsg.includes('Model not found')
+        ) {
+          telemetry.failedRequests++;
+          throw new Error(
+            `Configured Groq model "${useModel}" was not found (404). Please check GROQ_EXTRACTION_MODEL / GROQ_SYNTHESIS_MODEL in server/.env`
+          );
+        }
 
         // Invalid API Key
         if (
@@ -223,14 +375,14 @@ export class GroqProvider extends AIProvider {
           );
         }
 
-        // Daily token limit exhausted
+        // Daily token limit exhausted (TPD)
         if (
           status === 429 &&
           (errMsg.includes('tokens per day') ||
             errMsg.includes('TPD') ||
             errMsg.includes('daily') ||
-            err?.error?.code === 'rate_limit_exceeded' &&
-              errMsg.toLowerCase().includes('day'))
+            (err?.error?.code === 'rate_limit_exceeded' &&
+              errMsg.toLowerCase().includes('day')))
         ) {
           telemetry.failedRequests++;
           throw new DailyLimitError(
@@ -239,23 +391,29 @@ export class GroqProvider extends AIProvider {
           );
         }
 
-        // Genuine request/context size errors only. TPM/rate-limit errors are
-        // handled below and should not trigger recursive extraction splitting.
+        // TPM rate limit (per-minute 429) — retry with backoff, DO NOT treat as size error
+        const isTPM =
+          status === 429 ||
+          errMsg.includes('tokens per minute') ||
+          errMsg.includes('TPM') ||
+          errMsg.includes('per minute') ||
+          err?.error?.code === 'rate_limit_exceeded';
+
+        // Genuine request/context size errors only (413 or non-429 context length exceeded).
         const normalizedError = errMsg.toLowerCase();
         const errorCode = String(err?.code ?? err?.error?.code ?? '').toLowerCase();
         const errorType = String(err?.type ?? err?.error?.type ?? '').toLowerCase();
         const isGenuineRequestSizeError =
           status === 413 ||
-          errorCode.includes('context_length') ||
-          errorCode.includes('request_too_large') ||
-          errorType.includes('context_length') ||
-          errorType.includes('request_too_large') ||
-          normalizedError.includes('request too large') ||
-          normalizedError.includes('input too large') ||
-          normalizedError.includes('maximum context') ||
-          normalizedError.includes('context window') ||
-          normalizedError.includes('context length exceeded') ||
-          normalizedError.includes('maximum input');
+          (!isTPM && (
+            errorCode.includes('context_length') ||
+            errorCode.includes('request_too_large') ||
+            errorType.includes('context_length') ||
+            errorType.includes('request_too_large') ||
+            normalizedError.includes('context window') ||
+            normalizedError.includes('context length exceeded') ||
+            normalizedError.includes('maximum context length')
+          ));
 
         if (isGenuineRequestSizeError) {
           telemetry.failedRequests++;
@@ -265,13 +423,6 @@ export class GroqProvider extends AIProvider {
             { telemetryRecorded: true }
           );
         }
-
-        // TPM rate limit (per-minute) — retry with backoff
-        const isTPM =
-          status === 429 &&
-          (errMsg.includes('tokens per minute') ||
-            errMsg.includes('TPM') ||
-            errMsg.includes('per minute'));
 
         // Network or 5xx — retry
         const isRetryable5xx =
@@ -290,17 +441,24 @@ export class GroqProvider extends AIProvider {
         // Compute backoff delay
         let delay;
         if (isTPM) {
+          telemetry.tpm429Retries++;
           telemetry.rateLimitHits++;
-          const retryAfterRaw = err?.headers?.['retry-after'];
-          const retryAfterSecs = retryAfterRaw
-            ? parseInt(retryAfterRaw, 10)
-            : 0;
-          // Cap at MAX_RETRY_AFTER_SECONDS, use exponential with jitter if no header
+          const retryAfterRaw = err?.headers?.['retry-after'] || err?.response?.headers?.get?.('retry-after');
+          let retryAfterSecs = retryAfterRaw ? parseInt(retryAfterRaw, 10) : 0;
+
+          // Also check for "Please try again in X.XXs" in error message
+          if (!retryAfterSecs) {
+            const match = errMsg.match(/try again in (\d+(\.\d+)?)s/i);
+            if (match) {
+              retryAfterSecs = Math.ceil(parseFloat(match[1]));
+            }
+          }
+
           const cappedSecs = Math.min(
             retryAfterSecs || Math.pow(2, attempt + 1),
             MAX_RETRY_AFTER_SECONDS
           );
-          delay = cappedSecs * 1000 + Math.random() * 500; // jitter
+          delay = cappedSecs * 1000 + Math.random() * 400;
         } else {
           // 5xx — exponential with jitter
           delay =
@@ -309,10 +467,16 @@ export class GroqProvider extends AIProvider {
 
         telemetry.totalRetries++;
         console.warn(
-          `[Groq] Attempt ${attempt + 1}/${MAX_RETRIES} failed (${isTPM ? 'TPM rate limit' : '5xx/network'}). ` +
-          `Retrying in ${Math.round(delay / 1000)}s — model: ${useModel}. Error: ${errMsg.slice(0, 120)}`
+          `🔄 [GROQ RETRY] Attempt ${attempt + 1}/${MAX_RETRIES} failed (${isTPM ? 'TPM rate limit' : '5xx/network error'}). ` +
+          `Retrying in ${Math.round(delay / 1000)}s — model: ${useModel}. Detail: ${errMsg.slice(0, 140)}`
         );
+        if (queueReservation) {
+          queueReservation.release();
+          queueReservation = null;
+        }
         await sleep(delay);
+      } finally {
+        if (queueReservation) queueReservation.release();
       }
     }
 

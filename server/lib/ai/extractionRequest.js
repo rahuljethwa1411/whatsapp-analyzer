@@ -18,7 +18,7 @@ export function buildExtractionRequest(chunk, chunkIndex, totalChunks, options =
       { role: 'user', content: buildChunkExtractionUserPrompt(chunk, chunkIndex, totalChunks) },
     ],
     temperature: 0.1,
-    max_tokens: options.maxOutputTokens ?? 1200,
+    max_tokens: options.maxOutputTokens ?? 1800,
     response_format: { type: 'json_object' },
   };
 }

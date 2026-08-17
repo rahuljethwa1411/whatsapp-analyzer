@@ -127,9 +127,15 @@ export function huntAndVerifyReceipts(intelligence, messageIndex = null, maxRece
     }
   }
 
-  // 6. Supplement from Evidence Store
+  // 6. Supplement from Evidence Store — guarantee at least 8 individual receipts
+  // regardless of how many slots callback/contradiction pairs consumed.
+  const GUARANTEED_INDIVIDUAL = 8;
+  const RECURRING_SLOTS = 5;
+
+  // First pass: fill individual receipts (non-recurring_language)
   for (const ev of store) {
-    if (verifiedMap.size >= maxReceipts) break;
+    if (ev.type === 'recurring_language') continue; // handle separately below
+    if (verifiedMap.size >= maxReceipts + GUARANTEED_INDIVIDUAL) break;
     const verified = verifyMessage(ev.messageId, ev);
     if (verified && !verifiedMap.has(verified.messageId)) {
       verifiedMap.set(verified.messageId, {
@@ -138,6 +144,24 @@ export function huntAndVerifyReceipts(intelligence, messageIndex = null, maxRece
         reason: ev.connection || ev.reason || '',
         importance: ev.importance ?? 0.8,
       });
+    }
+  }
+
+  // Second pass: guarantee recurring_language items reach receipts
+  // (up to RECURRING_SLOTS slots, separate from main receipt cap)
+  const recurringAdded = [];
+  for (const ev of store) {
+    if (ev.type !== 'recurring_language') continue;
+    if (recurringAdded.length >= RECURRING_SLOTS) break;
+    const verified = verifyMessage(ev.messageId, ev);
+    if (verified && !verifiedMap.has(verified.messageId)) {
+      verifiedMap.set(verified.messageId, {
+        ...verified,
+        category: 'recurring_topic',
+        reason: ev.connection || '',
+        importance: ev.importance ?? 0.7,
+      });
+      recurringAdded.push(verified.messageId);
     }
   }
 

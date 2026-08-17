@@ -2,6 +2,7 @@ import { ChatMessage } from '../../types/chat';
 import { WordStats, WordFrequency } from '../../types/analysis';
 
 const STOP_WORDS = new Set([
+  // English common words
   'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i', 'it', 'for', 'not', 'on', 'with',
   'he', 'as', 'you', 'do', 'at', 'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her',
   'she', 'or', 'an', 'will', 'my', 'one', 'all', 'would', 'there', 'their', 'what', 'so', 'up',
@@ -10,7 +11,21 @@ const STOP_WORDS = new Set([
   'them', 'see', 'other', 'than', 'then', 'now', 'look', 'only', 'come', 'its', 'over', 'think',
   'also', 'back', 'after', 'use', 'two', 'how', 'our', 'work', 'first', 'well', 'way', 'even',
   'new', 'want', 'because', 'any', 'these', 'give', 'day', 'most', 'us', 'is', 'are', 'was', 'were',
-  'am', 'been', 'being', 'had', 'has', 'did', 'does', 'doing', 'ok', 'okay', 'yeah', 'yes',
+  'am', 'been', 'being', 'had', 'has', 'did', 'does', 'doing', 'ok', 'okay', 'yeah', 'yes', 'too',
+  'got', 'didnt', 'dont', 'cant', 'wont', 'ill', 'ive', 'youre', 'theyre', 'hes', 'shes', 'let',
+
+  // Hindi / Hinglish common stop words & fillers
+  'hai', 'hain', 'ho', 'hoga', 'hogi', 'hoge', 'tha', 'thi', 'the', 'kya', 'kyu', 'kyun', 'kaise',
+  'kaha', 'kahan', 'kab', 'kon', 'kaun', 'toh', 'to', 'bhi', 'se', 'ko', 'ka', 'ki', 'ke', 'ne',
+  'par', 'pe', 'me', 'mein', 'aur', 'ya', 'koi', 'kuch', 'kuchh', 'yeh', 'ye', 'woh', 'wo',
+  'mera', 'meri', 'mere', 'tera', 'teri', 'tere', 'apna', 'apni', 'apne', 'uska', 'uski', 'uske',
+  'unka', 'unki', 'unke', 'hum', 'hume', 'humne', 'tum', 'tumhe', 'tumne', 'aap', 'aapko',
+  'raha', 'rahi', 'rahe', 'kar', 'karo', 'kare', 'karega', 'karegi', 'karna', 'karta', 'karti',
+  'karte', 'nahi', 'nahin', 'na', 'mat', 'bhai', 'bro', 'yaar', 'yr', 'ab', 'sab', 'sirf',
+  'baat', 'bol', 'bola', 'boli', 'bole', 'bolna', 'dekh', 'dekha', 'dekho', 'de', 'do', 'diya',
+  'di', 'diye', 'le', 'lo', 'liya', 'li', 'liye', 'chal', 'chalo', 'aa', 'aao', 'aaya', 'aayi',
+  'gaya', 'gayi', 'gaye', 'jaa', 'jao', 'jaana', 're', 'bs', 'bas', 'accha', 'acha', 'achha',
+  'theek', 'thik', 'sahi', 'haan', 'hnn', 'hmm', 'hmmm', 'huh', 'lol', 'omg', 'lmao',
 ]);
 
 export function calculateWordStats(messages: ChatMessage[], participants: string[]): WordStats {

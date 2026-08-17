@@ -75,7 +75,8 @@ export async function generateCompleteStory({
       }),
       schema: StorySchema,
       tier: 'synthesis',
-      maxOutputTokens: 3800,
+      maxOutputTokens: 6000,
+      temperature: 0.8,
     });
   } catch (err) {
     if (err instanceof DailyLimitError || err instanceof InvalidApiKeyError) throw err;
@@ -94,7 +95,8 @@ export async function generateCompleteStory({
         }),
         schema: StorySchema,
         tier: 'synthesis',
-        maxOutputTokens: 3800,
+        maxOutputTokens: 6000,
+        temperature: 0.7,
       });
       console.log('[Story] Structured repair succeeded.');
     } catch (repairErr) {
@@ -342,12 +344,26 @@ function attachVerifiedReceipts(story, receiptCatalog, storyAngles) {
 
 function polishStory(story, storyAngles, receiptCatalog) {
   for (const [index, chapter] of story.chapters.entries()) {
+    let narrative = String(chapter.narrative || '');
+
+    // 1. Clean out raw internal message ID tags like (msg_123) or msg_456
+    narrative = narrative
+      .replace(/\s*\(\s*msg_\w+\s*\)/gi, '')
+      .replace(/\s*«MSG::[^:]*::([^»]*)»/gi, ' "$1" ')
+      .replace(/RECEIPT\s*\n\s*[^:\n]+:\s*"([^"]+)"/gi, ' "$1" ')
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'");
+
+    // 2. Strip generic filler phrases
     for (const pattern of GENERIC_FILLER_PATTERNS) {
-      chapter.narrative = String(chapter.narrative || '').replace(
+      narrative = narrative.replace(
         new RegExp(pattern.source, 'gi'),
         'In the verified receipts'
       );
     }
+
+    chapter.narrative = narrative.trim();
+
     if (isTooGeneric(chapter.narrative)) {
       const angle = storyAngles[index] || fallbackAngle(index, receiptCatalog, null);
       chapter.narrative = narrativeFromAngle(angle, receiptCatalog);
