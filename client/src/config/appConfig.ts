@@ -13,9 +13,9 @@ export const APP_CONFIG = {
   // Razorpay Public Key ID (rzp_test_... for test mode, rzp_live_... for production)
   RAZORPAY_KEY_ID: import.meta.env.VITE_RAZORPAY_KEY_ID || '',
 
-  // Pricing (₹399 with ₹799 anchor strikethrough)
-  REPORT_PRICE_PAISE: 39900, // ₹399 in paise
-  REPORT_PRICE_INR: 399,
+  // Pricing (Set to ₹1 / 100 paise for live payment testing)
+  REPORT_PRICE_PAISE: 100, // ₹1 in paise
+  REPORT_PRICE_INR: 1,
   ORIGINAL_PRICE_INR: 799,
 
   // Helpers
