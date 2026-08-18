@@ -1,4 +1,12 @@
 import 'dotenv/config';
+import dns from 'dns';
+
+// Ensure IPv4 is prioritized process-wide to prevent ENETUNREACH on systems without IPv6 routes
+try {
+  if (dns && typeof dns.setDefaultResultOrder === 'function') {
+    dns.setDefaultResultOrder('ipv4first');
+  }
+} catch { /* ignore */ }
 import express from 'express';
 import cors from 'cors';
 import path from 'path';

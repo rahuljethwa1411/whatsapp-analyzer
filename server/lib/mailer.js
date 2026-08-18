@@ -26,13 +26,16 @@ function createTransporter() {
     host: 'smtp.gmail.com',
     port: 465,
     secure: true,
-    family: 4, // Force IPv4 to eliminate ENETUNREACH on networks without IPv6 routes
     auth: {
       user: user.trim(),
       pass: pass.trim(),
     },
     tls: {
       rejectUnauthorized: false,
+    },
+    // Force IPv4 lookup to eliminate ENETUNREACH on networks without IPv6 routes
+    lookup: (hostname, options, callback) => {
+      dns.lookup(hostname, { family: 4, all: false }, callback);
     },
   });
 }
