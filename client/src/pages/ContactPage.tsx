@@ -7,7 +7,7 @@ import { FadeReveal } from '../components/afterchat/FadeReveal';
 const FAQS = [
   {
     q: 'I paid on Razorpay but my report did not unlock. What should I do?',
-    a: 'Do not worry! If your payment was debited, your transaction is safely recorded. Simply email support@afterchat.fun with your Razorpay Payment ID (e.g. pay_xxxxxxxxx) or your email, and our system will immediately verify and email your full 6-page PDF dossier.',
+    a: 'Do not worry! If your payment was debited, your transaction is safely recorded. Simply email iamafterchat@gmail.com with your Razorpay Payment ID (e.g. pay_xxxxxxxxx) or your email, and our system will immediately verify and email your full 6-page PDF dossier.',
   },
   {
     q: 'How do I export a WhatsApp chat file to analyze?',
@@ -100,7 +100,7 @@ export function ContactPage() {
           <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)', padding: '22px', borderRadius: '12px' }}>
             <span style={{ fontSize: '20px', display: 'block', marginBottom: '6px' }}>📧</span>
             <span style={{ color: '#ff8a75', fontFamily: '"DM Mono", monospace', fontSize: '11px', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>DIRECT SUPPORT EMAIL</span>
-            <a href="mailto:support@afterchat.fun" style={{ color: '#ffffff', fontSize: '16px', fontWeight: 600, textDecoration: 'underline' }}>support@afterchat.fun</a>
+            <a href="mailto:iamafterchat@gmail.com" style={{ color: '#ffffff', fontSize: '16px', fontWeight: 600, textDecoration: 'underline' }}>iamafterchat@gmail.com</a>
             <small style={{ color: '#8c8270', display: 'block', marginTop: '6px', fontSize: '12px' }}>For billing, refunds, and report help</small>
           </div>
 

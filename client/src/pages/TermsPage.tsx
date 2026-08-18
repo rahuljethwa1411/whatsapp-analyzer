@@ -174,7 +174,7 @@ export function TermsPage() {
               If you have any questions or require legal clarification, reach out to our team:
             </p>
             <p style={{ margin: 0, fontFamily: '"DM Mono", monospace', fontSize: '13px', color: '#ff8a75' }}>
-              📧 Email: <a href="mailto:support@afterchat.fun" style={{ color: '#ff8a75', textDecoration: 'underline' }}>support@afterchat.fun</a>
+              📧 Email: <a href="mailto:iamafterchat@gmail.com" style={{ color: '#ff8a75', textDecoration: 'underline' }}>iamafterchat@gmail.com</a>
             </p>
           </section>
 

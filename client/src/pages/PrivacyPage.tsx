@@ -142,7 +142,7 @@ export function PrivacyPage() {
               Because your parsed chat analysis is cached inside your own browser's <code>localStorage</code>, you can wipe all data at any instant simply by clicking the "Start Over" / "Clear Data" button or clearing your browser cookies.
             </p>
             <p style={{ lineHeight: 1.7, color: '#d4cbb8', fontSize: '14.5px', margin: 0 }}>
-              To request complete deletion of any billing/email records, email our Data Grievance Officer at <a href="mailto:privacy@afterchat.fun" style={{ color: '#6ee7b7' }}>privacy@afterchat.fun</a>.
+              To request complete deletion of any billing/email records, email our Data Grievance Officer at <a href="mailto:iamafterchat@gmail.com" style={{ color: '#6ee7b7' }}>iamafterchat@gmail.com</a>.
             </p>
           </section>
 
@@ -161,7 +161,7 @@ export function PrivacyPage() {
             <div style={{ fontFamily: '"DM Mono", monospace', fontSize: '13px', color: '#d4cbb8', lineHeight: 1.8 }}>
               <div><strong>Grievance Officer:</strong> Rahul Jethwa</div>
               <div><strong>Platform:</strong> AfterChat AI</div>
-              <div><strong>Email:</strong> <a href="mailto:privacy@afterchat.fun" style={{ color: '#6ee7b7', textDecoration: 'underline' }}>privacy@afterchat.fun</a></div>
+              <div><strong>Email:</strong> <a href="mailto:iamafterchat@gmail.com" style={{ color: '#6ee7b7', textDecoration: 'underline' }}>iamafterchat@gmail.com</a></div>
             </div>
           </section>
 

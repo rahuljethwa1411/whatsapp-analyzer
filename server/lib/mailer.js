@@ -105,7 +105,7 @@ function generateEmailHtml({
 
       <div class="footer">
         <p style="margin: 0 0 6px 0;">Afterchat AI • 100% Private Conversation Intelligence</p>
-        <p style="margin: 0;">Need assistance? Contact us at <a href="mailto:support@afterchat.fun">support@afterchat.fun</a></p>
+        <p style="margin: 0;">Need assistance? Contact us at <a href="mailto:iamafterchat@gmail.com">iamafterchat@gmail.com</a></p>
       </div>
     </div>
   </div>

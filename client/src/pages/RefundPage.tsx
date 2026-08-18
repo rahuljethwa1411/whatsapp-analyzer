@@ -81,7 +81,7 @@ export function RefundPage() {
               <span style={{ color: '#fbbf24', fontFamily: '"DM Mono", monospace', fontSize: '12px', fontWeight: 'bold' }}>STEP 01</span>
               <strong style={{ display: 'block', color: '#fff', fontSize: '14px', margin: '6px 0 4px' }}>Email Support</strong>
               <p style={{ margin: 0, fontSize: '12px', color: '#a8a090', lineHeight: 1.5 }}>
-                Send your Razorpay Payment ID to <a href="mailto:support@afterchat.fun" style={{ color: '#fbbf24' }}>support@afterchat.fun</a> within 7 days.
+                Send your Razorpay Payment ID to <a href="mailto:iamafterchat@gmail.com" style={{ color: '#fbbf24' }}>iamafterchat@gmail.com</a> within 7 days.
               </p>
             </div>
 
@@ -171,7 +171,7 @@ export function RefundPage() {
               We are here to help resolve any billing inquiry quickly:
             </p>
             <p style={{ margin: 0, fontFamily: '"DM Mono", monospace', fontSize: '13px', color: '#fbbf24' }}>
-              📧 Email: <a href="mailto:support@afterchat.fun" style={{ color: '#fbbf24', textDecoration: 'underline' }}>support@afterchat.fun</a>
+              📧 Email: <a href="mailto:iamafterchat@gmail.com" style={{ color: '#fbbf24', textDecoration: 'underline' }}>iamafterchat@gmail.com</a>
             </p>
           </section>
 
