@@ -4,6 +4,7 @@
  */
 
 import { FadeReveal } from '../afterchat/FadeReveal';
+import { APP_CONFIG } from '../../config/appConfig';
 
 interface ReportHeroProps {
   participantsStr: string;
@@ -60,7 +61,7 @@ export function ReportHero({
         <div className="hero-action-row">
           {!isUnlocked && onUnlock && (
             <button type="button" className="button hero-unlock-btn" onClick={onUnlock}>
-              Unlock Full 6-Page Dossier (₹399) 🔓
+              Unlock Full 6-Page Dossier (₹{APP_CONFIG.REPORT_PRICE_INR}) 🔓
             </button>
           )}
           {isUnlocked && onDownloadPdf && (
