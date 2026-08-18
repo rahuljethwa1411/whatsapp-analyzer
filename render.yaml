@@ -8,12 +8,14 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: GROQ_API_KEY
+      - key: OPENAI_API_KEY
         sync: false
-      - key: GROQ_EXTRACTION_MODEL
-        value: openai/gpt-oss-20b
-      - key: GROQ_SYNTHESIS_MODEL
-        value: openai/gpt-oss-120b
+      - key: OPENAI_EXTRACTION_MODEL
+        value: gpt-4o-mini
+      - key: OPENAI_EVIDENCE_MODEL
+        value: gpt-4o-mini
+      - key: OPENAI_STORY_MODEL
+        value: gpt-5-mini
       - key: RAZORPAY_KEY_ID
         sync: false
       - key: RAZORPAY_KEY_SECRET

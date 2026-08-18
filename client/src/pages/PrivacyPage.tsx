@@ -125,7 +125,7 @@ export function PrivacyPage() {
             </p>
             <ul style={{ paddingLeft: '20px', color: '#d4cbb8', lineHeight: 1.7, fontSize: '14px', margin: 0 }}>
               <li><strong>Razorpay Software Pvt. Ltd.:</strong> Level 1 PCI-DSS compliant payment processing for UPI, Cards, and NetBanking.</li>
-              <li><strong>Groq Inc. Cloud Inference:</strong> High-performance AI hardware for instant synthesis. Under our API agreement, data sent to Groq endpoints is not used to train public LLMs.</li>
+              <li><strong>OpenAI Cloud Inference:</strong> High-performance AI processing for conversational synthesis. Data sent to OpenAI API endpoints is not used to train public models.</li>
             </ul>
           </section>
 

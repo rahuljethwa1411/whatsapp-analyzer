@@ -7,6 +7,7 @@ import { APP_CONFIG } from '../../config/appConfig';
 
 interface StorySectionProps {
   story: Story | null;
+  isLoading?: boolean;
   getMessagesByIds: (ids: string[]) => ChatMessage[];
   isUnlocked: boolean;
   onUnlock?: () => void;
@@ -14,16 +15,46 @@ interface StorySectionProps {
 
 export function StorySection({
   story,
+  isLoading = false,
   getMessagesByIds,
   isUnlocked,
   onUnlock,
 }: StorySectionProps) {
-  if (!story) {
+  if (isLoading || !story) {
     return (
       <section id="sec-story" className="report-story-section">
         <FadeReveal>
           <p className="eyebrow">03 · THE COMPLETE STORY</p>
-          <h2>The narrative is generating...</h2>
+          <div
+            className="story-generating-box"
+            style={{
+              padding: '48px 24px',
+              textAlign: 'center',
+              background: 'rgba(204, 81, 61, 0.04)',
+              border: '1px dashed rgba(204, 81, 61, 0.3)',
+              borderRadius: '12px',
+              margin: '24px 0',
+            }}
+          >
+            <div
+              style={{
+                display: 'inline-block',
+                width: '36px',
+                height: '36px',
+                border: '3px solid rgba(204, 81, 61, 0.2)',
+                borderTopColor: '#cc513d',
+                borderRadius: '50%',
+                animation: 'spin 0.8s linear infinite',
+                marginBottom: '16px',
+              }}
+            />
+            <h3 style={{ fontFamily: '"Playfair Display", serif', fontSize: '22px', color: '#e8e0d2', marginBottom: '8px' }}>
+              Writing 10-Chapter Documentary with gpt-5-mini...
+            </h3>
+            <p style={{ color: '#9e948a', fontSize: '13.5px', maxWidth: '480px', margin: '0 auto', lineHeight: '1.6' }}>
+              Cross-referencing verified receipts, unhinged quotes, and relationship timeline before revealing the full narrative.
+            </p>
+          </div>
         </FadeReveal>
       </section>
     );

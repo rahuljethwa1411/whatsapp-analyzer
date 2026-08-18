@@ -107,11 +107,14 @@ export function EraSection({ eras, getMessagesByIds, isUnlocked, onUnlock }: Era
 }
 
 function formatDate(dStr: string): string {
-  if (!dStr) return '?';
+  if (!dStr) return '';
   try {
-    return new Date(dStr).toLocaleDateString('en-GB', {
+    const d = new Date(dStr);
+    if (isNaN(d.getTime())) return dStr;
+    return d.toLocaleDateString('en-GB', {
+      day: 'numeric',
       month: 'short',
-      year: '2-digit',
+      year: 'numeric',
     });
   } catch {
     return dStr;

@@ -60,7 +60,7 @@ export function ReportHero({
         <div className="hero-action-row">
           {!isUnlocked && onUnlock && (
             <button type="button" className="button hero-unlock-btn" onClick={onUnlock}>
-              Unlock Full 6-Page Dossier (₹499) 🔓
+              Unlock Full 6-Page Dossier (₹399) 🔓
             </button>
           )}
           {isUnlocked && onDownloadPdf && (

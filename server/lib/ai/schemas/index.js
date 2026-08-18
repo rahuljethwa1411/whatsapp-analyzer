@@ -563,6 +563,77 @@ export const StorySchema = z.object({
   ending: z.string().default(''),
 });
 
+export const STORY_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    title: { type: 'string' },
+    subtitle: { type: 'string' },
+    opening: { type: 'string' },
+    chapters: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          title: { type: 'string' },
+          period: { type: 'string' },
+          narrative: { type: 'string' },
+          keyStats: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                label: { type: 'string' },
+                value: { type: 'string' },
+              },
+              required: ['label', 'value'],
+              additionalProperties: false,
+            },
+          },
+          evidenceMessageIds: {
+            type: 'array',
+            items: { type: 'string' },
+          },
+        },
+        required: ['id', 'title', 'period', 'narrative', 'keyStats', 'evidenceMessageIds'],
+        additionalProperties: false,
+      },
+    },
+    awards: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          title: { type: 'string' },
+          recipient: { type: 'string' },
+          reason: { type: 'string' },
+          emoji: { type: 'string' },
+          evidenceMessageIds: {
+            type: 'array',
+            items: { type: 'string' },
+          },
+        },
+        required: ['id', 'title', 'recipient', 'reason', 'emoji', 'evidenceMessageIds'],
+        additionalProperties: false,
+      },
+    },
+    verdict: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        description: { type: 'string' },
+        badge: { type: 'string' },
+      },
+      required: ['title', 'description', 'badge'],
+      additionalProperties: false,
+    },
+    ending: { type: 'string' },
+  },
+  required: ['title', 'subtitle', 'opening', 'chapters', 'awards', 'verdict', 'ending'],
+  additionalProperties: false,
+};
+
 export const GenerateStoryRequestSchema = z.object({
   intelligence: AfterchatIntelligenceSchema,
   metadata: z.object({

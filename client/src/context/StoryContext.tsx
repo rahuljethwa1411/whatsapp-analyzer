@@ -85,19 +85,22 @@ export function StoryProvider({ children }: { children: ReactNode }) {
       intelligence: AfterchatIntelligence | null,
       analysis: ChatAnalysis
     ): Promise<Story | null> => {
+      // Deduplicate: if story is already generated or currently loading, avoid redundant API calls
+      if (story && status === 'done') {
+        return story;
+      }
+
       setStatus('loading');
       setError(null);
 
-      // Pre-generate safe fallback story built from intelligence eras & lore
+      // Pre-generate dynamic fallback built from real intelligence eras & lore
       const fallback = buildFallbackStory(intelligence, analysis);
 
-      // Set fallback story immediately so chapters reflect extracted eras
-      setStory(fallback);
-      try {
-        localStorage.setItem('afterchat_story', JSON.stringify(fallback));
-      } catch { /* ignore */ }
-
       if (!intelligence) {
+        setStory(fallback);
+        try {
+          localStorage.setItem('afterchat_story', JSON.stringify(fallback));
+        } catch { /* ignore */ }
         setStatus('done');
         return fallback;
       }
@@ -120,9 +123,9 @@ export function StoryProvider({ children }: { children: ReactNode }) {
           topWords: analysis.words.topWords?.slice(0, 10).map((w) => w.word) ?? [],
         };
 
-        // 60 second timeout for 70B full 10-chapter story generation
+        // 120 second timeout for deep reasoning story generation (gpt-5-mini)
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 60000);
+        const timeoutId = setTimeout(() => controller.abort(), 120000);
 
         const res = await fetch('/api/story', {
           method: 'POST',

@@ -38,7 +38,7 @@ export function ReportShell() {
 
   const { analysis } = useChatAnalysis();
   const { intelligence, getMessagesByIds } = useIntelligence();
-  const { story, generateStory, accessMode, setAccessMode } = useStory();
+  const { story, status: storyStatus, generateStory, accessMode, setAccessMode } = useStory();
 
   const handleDownloadPdf = async () => {
     if (isExportingPdf) return;
@@ -58,12 +58,12 @@ export function ReportShell() {
     }
   };
 
-  // Generate/update story whenever intelligence or analysis is loaded
+  // Only generate story if not already generated in analyzer sequence
   useEffect(() => {
-    if (analysis) {
+    if (analysis && intelligence && !story && storyStatus === 'idle') {
       generateStory(intelligence, analysis);
     }
-  }, [intelligence, analysis, generateStory]);
+  }, [intelligence, analysis, story, storyStatus, generateStory]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -144,6 +144,7 @@ export function ReportShell() {
         {/* 03. COMPLETE STORY (Shows 2 Chapters in Free, 10 in Full) */}
         <StorySection
           story={story}
+          isLoading={storyStatus === 'loading'}
           getMessagesByIds={getMessagesByIds}
           isUnlocked={isUnlocked}
           onUnlock={handleUnlockRequest}

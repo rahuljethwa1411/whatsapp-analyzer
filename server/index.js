@@ -6,7 +6,14 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { AnalyzeRequestSchema } from './lib/ai/schemas/index.js';
 import { runIntelligencePipeline } from './lib/intelligence.js';
-import { DailyLimitError, InvalidApiKeyError, getTokenTelemetry } from './lib/ai/groq.js';
+import {
+  DailyLimitError,
+  InvalidApiKeyError,
+  ModelNotFoundError,
+  RateLimitError,
+  getTokenTelemetry,
+} from './lib/ai/openaiClient.js';
+import { validateModelConfig, getModelForTier } from './lib/ai/modelConfig.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,23 +27,25 @@ app.use(express.json({ limit: '50mb' }));
 
 // ─── Health Check ──────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
+  const configValidation = validateModelConfig();
   res.json({
     status: 'ok',
-    service: 'Afterchat Server API',
-    phase: 3,
-    groqConfigured: !!process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'your_groq_api_key_here',
-    extractionModel: process.env.GROQ_EXTRACTION_MODEL || process.env.GROQ_MODEL || 'groq/compound-mini',
-    synthesisModel: process.env.GROQ_SYNTHESIS_MODEL || process.env.GROQ_MODEL || 'groq/compound',
+    service: 'Afterchat Server API (OpenAI Multi-Tier Edition)',
+    provider: 'OpenAI',
+    openaiConfigured: configValidation.isValid,
+    extractionModel: getModelForTier('extraction'),
+    evidenceModel: getModelForTier('evidence'),
+    storyModel: getModelForTier('story'),
     timestamp: new Date().toISOString(),
   });
 });
 
-// ─── Internal Telemetry (do NOT expose to client) ──────────────────────────
+// ─── Internal Telemetry ───────────────────────────────────────────────────
 app.get('/api/telemetry', (req, res) => {
   res.json(getTokenTelemetry());
 });
 
-// ─── Phase 3 AI Analysis ──────────────────────────────────────────────────
+// ─── AI Analysis Endpoint (Tier 1 & Tier 2) ──────────────────────────────
 app.post('/api/analyze', async (req, res) => {
   // 1. Validate request shape
   const parseResult = AnalyzeRequestSchema.safeParse(req.body);
@@ -44,17 +53,18 @@ app.post('/api/analyze', async (req, res) => {
     return res.status(400).json({
       success: false,
       error: 'Invalid request format.',
-      details: parseResult.error.issues.map(i => i.message),
+      details: parseResult.error.issues.map((i) => i.message),
     });
   }
 
   const request = parseResult.data;
 
   // 2. Check API key configured
-  if (!process.env.GROQ_API_KEY || process.env.GROQ_API_KEY === 'your_groq_api_key_here') {
+  const configCheck = validateModelConfig();
+  if (!configCheck.isValid) {
     return res.status(503).json({
       success: false,
-      error: 'AI analysis is not configured. Add GROQ_API_KEY to server/.env',
+      error: 'AI analysis is not configured. Add OPENAI_API_KEY to server/.env',
     });
   }
 
@@ -66,16 +76,16 @@ app.post('/api/analyze', async (req, res) => {
 
   const totalMessages = request.metadata.totalMessages;
   const participants = request.metadata.participants.join(', ');
-  const extractionModel = process.env.GROQ_EXTRACTION_MODEL || process.env.GROQ_MODEL || 'groq/compound-mini';
-  const synthesisModel = process.env.GROQ_SYNTHESIS_MODEL || process.env.GROQ_MODEL || 'groq/compound';
+  const extractionModel = getModelForTier('extraction');
+  const evidenceModel = getModelForTier('evidence');
 
   console.log('\n' + '━'.repeat(60));
-  console.log(`🚀 [ANALYZE REQUEST RECEIVED]`);
+  console.log(`🚀 [OPENAI ANALYZE REQUEST RECEIVED]`);
   console.log(`   💬 Total Messages:    ${totalMessages.toLocaleString()}`);
   console.log(`   📦 Logical Chunks:    ${chunks.length}`);
   console.log(`   👥 Participants:      ${participants}`);
   console.log(`   ⚡ Extraction Model:  ${extractionModel}`);
-  console.log(`   🧠 Synthesis Model:   ${synthesisModel}`);
+  console.log(`   🧠 Evidence Model:    ${evidenceModel}`);
   console.log('━'.repeat(60));
 
   try {
@@ -95,7 +105,7 @@ app.post('/api/analyze', async (req, res) => {
     console.error(`❌ [PIPELINE FAILURE] Analysis encountered an error:`);
     console.error(`   Error Message: ${err.message}`);
     if (err.stack && process.env.NODE_ENV !== 'production') {
-      console.error(`   Stack:\n${err.stack.split('\n').slice(1, 4).map(l => '     ' + l.trim()).join('\n')}`);
+      console.error(`   Stack:\n${err.stack.split('\n').slice(1, 4).map((l) => '     ' + l.trim()).join('\n')}`);
     }
     console.error('═'.repeat(60) + '\n');
 
@@ -103,13 +113,13 @@ app.post('/api/analyze', async (req, res) => {
     if (err instanceof InvalidApiKeyError || err?.code === 'INVALID_API_KEY') {
       return res.status(401).json({
         success: false,
-        error: 'Invalid GROQ_API_KEY in server/.env. Please verify your API key or generate a new key at https://console.groq.com/keys',
+        error: 'Invalid OPENAI_API_KEY in server/.env. Please verify your API key at https://platform.openai.com/api-keys',
         code: 'INVALID_API_KEY',
       });
     }
 
     // Model Not Found (404)
-    if (err.message?.includes('was not found (404)') || err.message?.includes('model_not_found')) {
+    if (err instanceof ModelNotFoundError || err?.code === 'MODEL_NOT_FOUND' || err.message?.includes('model_not_found')) {
       return res.status(400).json({
         success: false,
         error: err.message,
@@ -117,12 +127,21 @@ app.post('/api/analyze', async (req, res) => {
       });
     }
 
-    // Daily limit — tell user specifically
+    // Daily limit / Quota exceeded
     if (err instanceof DailyLimitError || err?.code === 'DAILY_LIMIT_EXCEEDED') {
       return res.status(429).json({
         success: false,
-        error: "We've hit the daily AI analysis limit. Please try again tomorrow, or upgrade your Groq plan for higher limits.",
+        error: "OpenAI account quota exceeded. Please verify billing at https://platform.openai.com/account/billing",
         code: 'DAILY_LIMIT_EXCEEDED',
+      });
+    }
+
+    // Rate limit
+    if (err instanceof RateLimitError || err?.code === 'RATE_LIMIT_EXCEEDED') {
+      return res.status(429).json({
+        success: false,
+        error: 'OpenAI rate limit reached. Please try again in a few moments.',
+        code: 'RATE_LIMIT_EXCEEDED',
       });
     }
 
@@ -135,7 +154,7 @@ app.post('/api/analyze', async (req, res) => {
       });
     }
 
-    const isConfigError = err.message?.includes('GROQ_API_KEY');
+    const isConfigError = err.message?.includes('OPENAI_API_KEY');
     return res.status(500).json({
       success: false,
       error: isConfigError
@@ -145,27 +164,27 @@ app.post('/api/analyze', async (req, res) => {
   }
 });
 
-// ─── Phase 4 AI Story Generation (Story Writer V2 — 10 Chapters) ───────────
+// ─── AI Story Generation (Story Writer V2 — 10 Chapters via gpt-5.4-mini) ──
 app.post('/api/story', async (req, res) => {
   const { GenerateStoryRequestSchema } = await import('./lib/ai/schemas/index.js');
   const { generateCompleteStory } = await import('./lib/storyGenerator.js');
-  const { DailyLimitError, InvalidApiKeyError } = await import('./lib/ai/groq.js');
 
   const parseResult = GenerateStoryRequestSchema.safeParse(req.body);
   if (!parseResult.success) {
     return res.status(400).json({
       success: false,
       error: 'Invalid request format for story generation.',
-      details: parseResult.error.issues.map(i => i.message),
+      details: parseResult.error.issues.map((i) => i.message),
     });
   }
 
   const { intelligence, summaryStats, metadata } = parseResult.data;
 
-  if (!process.env.GROQ_API_KEY || process.env.GROQ_API_KEY === 'your_groq_api_key_here') {
+  const configCheck = validateModelConfig();
+  if (!configCheck.isValid) {
     return res.status(503).json({
       success: false,
-      error: 'AI analysis is not configured. Add GROQ_API_KEY to server/.env',
+      error: 'AI analysis is not configured. Add OPENAI_API_KEY to server/.env',
     });
   }
 
@@ -187,7 +206,7 @@ app.post('/api/story', async (req, res) => {
     if (err instanceof DailyLimitError) {
       return res.status(429).json({
         success: false,
-        error: "We've hit the daily AI limit. Please try again tomorrow.",
+        error: 'OpenAI quota exceeded. Please check your billing settings.',
         code: 'DAILY_LIMIT_EXCEEDED',
       });
     }
@@ -195,7 +214,7 @@ app.post('/api/story', async (req, res) => {
     if (err instanceof InvalidApiKeyError) {
       return res.status(401).json({
         success: false,
-        error: 'Invalid Groq API key.',
+        error: 'Invalid OpenAI API key.',
         code: 'INVALID_API_KEY',
       });
     }
@@ -358,7 +377,7 @@ app.post('/api/send-report-email', async (req, res) => {
   }
 });
 
-// ─── Static Frontend Serving (Production / Unified Deployment) ───────────
+// ─── Static Frontend Serving ─────────────────────────────────────────────
 if (fs.existsSync(clientDistPath)) {
   app.use(express.static(clientDistPath));
   app.get('*', (req, res, next) => {
@@ -370,14 +389,13 @@ if (fs.existsSync(clientDistPath)) {
 }
 
 app.listen(PORT, () => {
-  const groqOk = !!process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'your_groq_api_key_here';
-  const extractionModel = process.env.GROQ_EXTRACTION_MODEL || process.env.GROQ_MODEL || 'groq/compound-mini';
-  const synthesisModel = process.env.GROQ_SYNTHESIS_MODEL || process.env.GROQ_MODEL || 'groq/compound';
+  const config = validateModelConfig();
   console.log(`⚡ Afterchat API Server running on port ${PORT}`);
-  console.log(`   Phase 3/4: ${groqOk ? '✅ Groq configured' : '⚠️  Set GROQ_API_KEY in server/.env'}`);
-  if (groqOk) {
-    console.log(`   Extraction model: ${extractionModel}`);
-    console.log(`   Synthesis model:  ${synthesisModel}`);
+  console.log(`   Provider: OpenAI (${config.isValid ? '✅ Configured' : '⚠️ Set OPENAI_API_KEY in server/.env'})`);
+  if (config.isValid) {
+    console.log(`   Extraction model: ${config.config.extractionModel}`);
+    console.log(`   Evidence model:   ${config.config.evidenceModel}`);
+    console.log(`   Story model:      ${config.config.storyModel}`);
   }
   if (fs.existsSync(clientDistPath)) {
     console.log(`   Frontend: Serving client/dist at http://localhost:${PORT}`);

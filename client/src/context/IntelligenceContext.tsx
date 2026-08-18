@@ -30,16 +30,15 @@ export interface ProgressState {
 }
 
 const FRIENDLY_STAGES: ProgressState[] = [
-  { stage: 'Parsing messages...', percent: 5 },
-  { stage: 'Mapping the conversations...', percent: 12 },
-  { stage: 'Reading conversation patterns...', percent: 25 },
-  { stage: 'Finding recurring moments...', percent: 40 },
-  { stage: 'Spotting the themes...', percent: 55 },
-  { stage: 'Finding the lore...', percent: 70 },
-  { stage: 'Looking for plot twists...', percent: 80 },
-  { stage: 'Identifying patterns...', percent: 87 },
-  { stage: 'Connecting the receipts...', percent: 93 },
-  { stage: 'Your chat is getting suspiciously interesting.', percent: 97 },
+  { stage: 'Parsing messages & building index...', percent: 5 },
+  { stage: 'Reading conversation patterns...', percent: 18 },
+  { stage: 'Finding recurring inside jokes & lore...', percent: 35 },
+  { stage: 'Spotting relationship eras & shifts...', percent: 52 },
+  { stage: 'Investigating global dynamics & callbacks...', percent: 68 },
+  { stage: 'Connecting verified receipts...', percent: 78 },
+  { stage: 'Writing 10-chapter documentary with gpt-5-mini...', percent: 88 },
+  { stage: 'Finalizing awards, verdict & case file...', percent: 96 },
+  { stage: 'Done! Your classified case file is ready.', percent: 100 },
 ];
 
 export type PipelineStage = string;
@@ -204,7 +203,7 @@ export function IntelligenceProvider({ children }: { children: ReactNode }) {
           if (code === 'DAILY_LIMIT_EXCEEDED') {
             throw new Error(
               "We've hit the daily AI analysis limit. Please try again tomorrow. " +
-              "If you need more capacity, consider upgrading the Groq API plan."
+              "If you need more capacity, consider checking your OpenAI account limits."
             );
           }
 

@@ -1,62 +1,44 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { DEFAULT_CONFIG } from './ai/modelConfig.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 dotenv.config();
 
 /**
- * Token Estimator
+ * Token Estimator for OpenAI Pipeline.
  *
- * Conservative character-based token estimation for WhatsApp messages.
- * Real tokenizers are model-specific and not available in plain Node ESM.
- * We use ~3.8 chars/token for ASCII text and ~1.5 chars/token for emoji/CJK/unicode.
- *
- * Budget constants — ALL other modules must import from here.
+ * Provides conservative character-based token estimation for WhatsApp messages and requests.
+ * Accounts for:
+ *   - System instructions
+ *   - User prompt framing
+ *   - Serialized messages
+ *   - JSON Schema overhead
+ *   - Expected output token allowance
+ *   - Safety margin
  */
 
-// ─── Budget Constants ────────────────────────────────────────────────────────
-
-/**
- * Estimated token overhead of all non-message framing inside the extraction
- * user prompt (header, separators, example block, footer rules).
- *
- * The extraction user prompt looks like:
- *   CHUNK N OF M\nPeriod: ...\nParticipants: ...\n   → ~50  tokens
- *   ═══ separator × 3                                → ~30  tokens
- *   Example block (ID, sender, JSON example)         → ~120 tokens
- *   Footer CRITICAL RULES block                      → ~80  tokens
- *   ──────────────────────────────────────────────────────────────
- *   Total overhead                                   ~280–350 tokens
- *
- * We use 600 as a conservative (generous) buffer so every chunk's full
- * formatted user prompt stays safely under MAX_EXTRACTION_INPUT_TOKENS.
- */
 export const TOP_LEVEL_CHUNK_COUNT = parseInt(
-  process.env.TOP_LEVEL_CHUNK_COUNT || '20',
+  process.env.TOP_LEVEL_CHUNK_COUNT || String(DEFAULT_CONFIG.TOP_LEVEL_CHUNK_COUNT),
   10
 );
 
 export const MAX_RECOVERY_DEPTH = parseInt(
-  process.env.MAX_RECOVERY_DEPTH || '4',
+  process.env.MAX_RECOVERY_DEPTH || String(DEFAULT_CONFIG.MAX_RECOVERY_DEPTH),
   10
 );
 
 export const MAX_CONCURRENT_EXTRACTIONS = Math.max(
   1,
-  parseInt(process.env.MAX_CONCURRENT_EXTRACTIONS || '2', 10)
-);
-
-export const GROQ_TPM_BUDGET = parseInt(
-  process.env.GROQ_TPM_BUDGET || '12000',
-  10
+  parseInt(process.env.MAX_CONCURRENT_EXTRACTIONS || String(DEFAULT_CONFIG.MAX_CONCURRENT_EXTRACTIONS), 10)
 );
 
 export const PROMPT_OVERHEAD_TOKENS = 600;
 
 export const MAX_EXTRACTION_INPUT_TOKENS = parseInt(
-  process.env.MAX_EXTRACTION_INPUT_TOKENS || '6000',
+  process.env.MAX_EXTRACTION_INPUT_TOKENS || '16000',
   10
 );
 
@@ -65,20 +47,31 @@ export const MAX_MESSAGE_PAYLOAD_TOKENS =
 
 export const MAX_MESSAGES_PER_CHUNK = 2500;
 
-export const MAX_EXTRACTION_CHUNKS = 40;
+export const MAX_SINGLE_MESSAGE_TOKENS = 1500;
 
-export const MAX_SINGLE_MESSAGE_TOKENS = 500;
-
-export const MAX_MEMORY_TOKENS = 12000;
+export const MAX_MEMORY_TOKENS = 16000;
 
 export const EXTRACTION_INPUT_SAFETY_RATIO = 0.85;
 
 export const SAFE_EXTRACTION_INPUT_TOKENS = parseInt(
-  process.env.SAFE_EXTRACTION_INPUT_TOKENS || '',
+  process.env.SAFE_EXTRACTION_INPUT_TOKENS || String(DEFAULT_CONFIG.SAFE_EXTRACTION_INPUT_TOKENS),
   10
-) || Math.floor(MAX_EXTRACTION_INPUT_TOKENS * EXTRACTION_INPUT_SAFETY_RATIO);
+);
 
-// ─── Core Estimator ──────────────────────────────────────────────────────────
+export const EXTRACTION_MAX_OUTPUT_TOKENS = parseInt(
+  process.env.EXTRACTION_MAX_OUTPUT_TOKENS || String(DEFAULT_CONFIG.EXTRACTION_MAX_OUTPUT_TOKENS),
+  10
+);
+
+export const EVIDENCE_MAX_OUTPUT_TOKENS = parseInt(
+  process.env.EVIDENCE_MAX_OUTPUT_TOKENS || String(DEFAULT_CONFIG.EVIDENCE_MAX_OUTPUT_TOKENS),
+  10
+);
+
+export const STORY_MAX_OUTPUT_TOKENS = parseInt(
+  process.env.STORY_MAX_OUTPUT_TOKENS || String(DEFAULT_CONFIG.STORY_MAX_OUTPUT_TOKENS),
+  10
+);
 
 /**
  * Estimates the number of tokens in a string.
@@ -107,17 +100,11 @@ export function estimateTokens(text) {
   }
 
   const raw = asciiCount / 3.8 + unicodeCount / 1.5;
-  // 10% safety buffer, minimum 1
   return Math.max(1, Math.ceil(raw * 1.1));
 }
 
 /**
- * Estimates the token count of a single message as it appears in the
- * extraction user prompt:
- *   "[msg_123] [2024-08-12T22:42:00.000Z] Sender: text\n"
- *
- * The timestamp is included because buildChunkExtractionUserPrompt
- * formats messages as: [id] [timestamp] sender: text
+ * Estimates the token count of a single message as formatted in the extraction prompt.
  *
  * @param {{ id: string, sender: string|null, timestamp?: string, text: string }} msg
  * @returns {number}
@@ -128,50 +115,21 @@ export function estimateMessageTokens(msg) {
 }
 
 /**
- * Estimates the total raw-message token count of an array of messages
- * as they would appear in the extraction user prompt (message block only,
- * does not include prompt overhead framing).
+ * Estimates the total raw-message token count of an array of messages.
  *
  * @param {Array<{ id: string, sender: string|null, timestamp?: string, text: string }>} messages
  * @returns {number}
  */
 export function estimateChunkPayloadTokens(messages) {
   let total = 0;
-  for (const msg of messages) {
+  for (const msg of messages || []) {
     total += estimateMessageTokens(msg);
   }
   return total;
 }
 
 /**
- * Truncates a message's text to fit within MAX_SINGLE_MESSAGE_TOKENS.
- * Returns a new message object; never mutates the original.
- *
- * @param {{ id: string, sender: string|null, timestamp?: string, text: string, [key: string]: any }} msg
- * @returns {{ id: string, sender: string|null, timestamp?: string, text: string, [key: string]: any }}
- */
-export function truncateMessageIfOversized(msg) {
-  if (estimateMessageTokens(msg) <= MAX_SINGLE_MESSAGE_TOKENS) return msg;
-
-  // Binary-search for the right truncation length
-  let lo = 0;
-  let hi = msg.text.length;
-  while (lo < hi) {
-    const mid = Math.floor((lo + hi + 1) / 2);
-    const candidate = { ...msg, text: msg.text.slice(0, mid) + '…' };
-    if (estimateMessageTokens(candidate) <= MAX_SINGLE_MESSAGE_TOKENS) {
-      lo = mid;
-    } else {
-      hi = mid - 1;
-    }
-  }
-
-  return { ...msg, text: msg.text.slice(0, lo) + ' [truncated]' };
-}
-
-/**
  * Estimates the serialized token count of any JSON-serializable object.
- * Used to measure ChatMemory, prompts, etc.
  *
  * @param {any} obj
  * @returns {number}
@@ -184,16 +142,29 @@ export function estimateObjectTokens(obj) {
   }
 }
 
+/**
+ * Preflight token estimation of a full extraction request.
+ * Accounts for system prompt, user prompt framing, messages, schema overhead, and expected output allowance.
+ *
+ * @param {Object} request - Built extraction request object
+ * @returns {Object} Diagnostics and safety check
+ */
 export function estimateExtractionRequest(request) {
-  const serializedRequest = JSON.stringify(request);
-  const estimatedInputTokens = estimateTokens(serializedRequest);
+  const systemContent = request?.messages?.find(m => m.role === 'system')?.content || '';
+  const userContent = request?.messages?.find(m => m.role === 'user')?.content || '';
+  const schemaTokens = request?.schema ? estimateObjectTokens(request.schema) : 200;
+  const outputAllowance = request?.max_tokens || EXTRACTION_MAX_OUTPUT_TOKENS;
+
+  const inputTokens = estimateTokens(systemContent) + estimateTokens(userContent) + schemaTokens;
+  const totalTokens = inputTokens + outputAllowance;
 
   return {
-    estimatedInputTokens,
+    estimatedInputTokens: inputTokens,
+    estimatedTotalTokens: totalTokens,
     safeBudget: SAFE_EXTRACTION_INPUT_TOKENS,
     maxInputTokens: MAX_EXTRACTION_INPUT_TOKENS,
-    safe: estimatedInputTokens <= SAFE_EXTRACTION_INPUT_TOKENS,
-    totalSerializedRequestChars: serializedRequest.length,
+    safe: inputTokens <= SAFE_EXTRACTION_INPUT_TOKENS,
+    totalSerializedRequestChars: (systemContent + userContent).length,
     messageCount: Array.isArray(request?.messages) ? request.messages.length : 0,
   };
 }

@@ -544,9 +544,14 @@ export function formatEvidenceForPrompt(evidenceStore, maxItems = 120) {
   }).join('\n\n');
 }
 
+function safeArray(val) {
+  if (Array.isArray(val)) return val;
+  if (val && typeof val === 'object') return Object.values(val);
+  return [];
+}
+
 /**
- * Validate all evidence references within the RelationshipInvestigator result.
- * Strips invalid messageIds and replaces exactText with canonical message text.
+ * Validates all evidence references inside a RelationshipInvestigator result.
  *
  * @param {Object} result - RelationshipInvestigator result
  * @param {Map} messageIndex - map of real messages by id
@@ -554,7 +559,7 @@ export function formatEvidenceForPrompt(evidenceStore, maxItems = 120) {
  */
 export function validateInvestigatorRefs(result, messageIndex) {
   if (!result || typeof result !== 'object') {
-    return { validatedResult: result, validCount: 0, strippedCount: 0 };
+    return { validatedResult: result || {}, validCount: 0, strippedCount: 0 };
   }
 
   let validCount = 0;
@@ -577,69 +582,68 @@ export function validateInvestigatorRefs(result, messageIndex) {
   }
 
   function cleanRefList(list) {
-    if (!Array.isArray(list)) return [];
-    return list.map(cleanRef).filter(Boolean);
+    return safeArray(list).map(cleanRef).filter(Boolean);
   }
 
   const cleaned = {
     ...result,
-    eras: (result.eras || []).map((era, idx) => ({
+    eras: safeArray(result.eras).map((era, idx) => ({
       ...era,
       id: era.id || `era_${idx + 1}`,
       evidence: cleanRefList(era.evidence),
     })),
-    participantProfiles: (result.participantProfiles || []).map(p => ({
+    participantProfiles: safeArray(result.participantProfiles).map((p) => ({
       ...p,
-      selfImage: (p.selfImage || []).map(si => ({
+      selfImage: safeArray(p.selfImage).map((si) => ({
         ...si,
         evidence: cleanRefList(si.evidence),
       })),
-      observedBehavior: (p.observedBehavior || []).map(ob => ({
+      observedBehavior: safeArray(p.observedBehavior).map((ob) => ({
         ...ob,
         evidence: cleanRefList(ob.evidence),
       })),
     })),
-    patterns: (result.patterns || []).map((pat, idx) => ({
+    patterns: safeArray(result.patterns).map((pat, idx) => ({
       ...pat,
       id: pat.id || `pattern_${idx + 1}`,
       evidence: cleanRefList(pat.evidence),
-    })).filter(pat => pat.evidence.length > 0),
-    contradictions: (result.contradictions || []).map(c => ({
+    })).filter((pat) => pat.evidence.length > 0),
+    contradictions: safeArray(result.contradictions).map((c) => ({
       ...c,
       evidence: cleanRefList(c.evidence),
-    })).filter(c => c.evidence.length > 0),
-    callbacks: (result.callbacks || []).map(cb => {
+    })).filter((c) => c.evidence.length > 0),
+    callbacks: safeArray(result.callbacks).map((cb) => {
       const earlier = cleanRef(cb.earlier);
       const later = cleanRef(cb.later);
       if (!earlier || !later) return null;
       return { ...cb, earlier, later };
     }).filter(Boolean),
-    foreshadowing: (result.foreshadowing || []).map(fs => {
+    foreshadowing: safeArray(result.foreshadowing).map((fs) => {
       const setup = cleanRef(fs.setup);
       const payoff = cleanRef(fs.payoff);
       if (!setup || !payoff) return null;
       return { ...fs, setup, payoff };
     }).filter(Boolean),
-    lore: (result.lore || []).map((l, idx) => ({
+    lore: safeArray(result.lore).map((l, idx) => ({
       ...l,
       id: l.id || `lore_${idx + 1}`,
       evidence: cleanRefList(l.evidence),
     })),
-    funnyMoments: (result.funnyMoments || []).map(fm => ({
+    funnyMoments: safeArray(result.funnyMoments).map((fm) => ({
       ...fm,
       evidence: cleanRefList(fm.evidence),
     })),
-    turningPoints: (result.turningPoints || []).map(tp => ({
+    turningPoints: safeArray(result.turningPoints).map((tp) => ({
       ...tp,
       evidence: cleanRefList(tp.evidence),
     })),
-    plotTwists: (result.plotTwists || []).map((pt, idx) => ({
+    plotTwists: safeArray(result.plotTwists).map((pt, idx) => ({
       ...pt,
       id: pt.id || `twist_${idx + 1}`,
       evidence: cleanRefList(pt.evidence),
     })),
-    receiptCandidates: (result.receiptCandidates || []).map(rc => {
-      if (!rc.messageId || !messageIndex.has(rc.messageId)) {
+    receiptCandidates: safeArray(result.receiptCandidates).map((rc) => {
+      if (!rc || !rc.messageId || !messageIndex.has(rc.messageId)) {
         strippedCount++;
         return null;
       }
@@ -652,11 +656,11 @@ export function validateInvestigatorRefs(result, messageIndex) {
         sender: rc.sender || realMsg.sender || 'Unknown',
       };
     }).filter(Boolean),
-    unresolvedThreads: (result.unresolvedThreads || []).map(ut => ({
+    unresolvedThreads: safeArray(result.unresolvedThreads).map((ut) => ({
       ...ut,
       evidence: cleanRefList(ut.evidence),
     })),
-    storyInsights: (result.storyInsights || []).map(si => ({
+    storyInsights: safeArray(result.storyInsights).map((si) => ({
       ...si,
       evidence: cleanRefList(si.evidence),
     })),

@@ -2,91 +2,97 @@ import {
   buildChunkExtractionSystemPrompt,
   buildChunkExtractionUserPrompt,
 } from './prompts/chunkExtraction.js';
-import { ChunkEvidenceSchema } from './schemas/index.js';
+import { getModelForTier } from './modelConfig.js';
+import { EXTRACTION_MAX_OUTPUT_TOKENS } from '../tokenEstimator.js';
 
-// ─── Model helpers ────────────────────────────────────────────────────────────
+// ─── Strict JSON Schema for OpenAI Structured Outputs ─────────────────────────
 
-export function getExtractionModelName() {
-  return (
-    process.env.GROQ_EXTRACTION_MODEL ||
-    process.env.GROQ_MODEL ||
-    'openai/gpt-oss-20b'
-  );
-}
+export const CHUNK_EXTRACTION_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    period: {
+      type: 'object',
+      properties: {
+        start: { type: 'string' },
+        end: { type: 'string' },
+      },
+      required: ['start', 'end'],
+      additionalProperties: false,
+    },
+    topics: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    recurringThemes: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    evidence: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          messageId: { type: 'string' },
+          type: { type: 'string' },
+          importance: { type: 'number' },
+          connection: { type: 'string' },
+        },
+        required: ['messageId', 'type', 'importance', 'connection'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['period', 'topics', 'recurringThemes', 'evidence'],
+  additionalProperties: false,
+};
+
+// ─── Request Builder ──────────────────────────────────────────────────────────
 
 /**
- * Returns true when the model is a gpt-oss thinking model.
- * Thinking models reason internally before outputting JSON, so:
- *   - Do NOT set response_format: json_object (causes 400s)
- *   - Set reasoning_effort: 'low' for extraction to preserve token budget
- *   - Use a larger max_tokens to give room for both reasoning + JSON output
- */
-function isThinkingModel(model) {
-  return model.startsWith('openai/gpt-oss');
-}
-
-// ─── Request builder ──────────────────────────────────────────────────────────
-
-/**
- * Builds the raw Groq API request for chunk extraction.
+ * Builds the OpenAI API request for chunk extraction.
  *
- * max_tokens for thinking models must be large enough for reasoning + JSON output.
- * 4096 is fine — with reasoning_effort:'low', actual reasoning is minimal,
- * and the JSON output for ≤20 evidence items is typically 800-1500 tokens.
+ * @param {Object} chunk - Logical or recovery subchunk
+ * @param {number} chunkIndex
+ * @param {number} totalChunks
+ * @param {Object} [options]
+ * @returns {Object}
  */
 export function buildExtractionRequest(chunk, chunkIndex, totalChunks, options = {}) {
-  const model = options.model || getExtractionModelName();
-  const thinking = isThinkingModel(model);
+  const model = options.model || getModelForTier('extraction');
+  const maxTokens = options.maxOutputTokens ?? EXTRACTION_MAX_OUTPUT_TOKENS;
 
-  // Thinking models need headroom for internal reasoning + JSON output.
-  // reasoning_effort:'low' keeps actual reasoning minimal (~200-500 tokens),
-  // so 2048 is plenty for reasoning + compact JSON output (≤20 evidence items).
-  // Non-thinking models only need budget for JSON output (~800-1200 tokens).
-  const maxTokens = options.maxOutputTokens ?? (thinking ? 2048 : 1200);
-
-  const request = {
+  return {
     model,
     messages: [
       { role: 'system', content: buildChunkExtractionSystemPrompt() },
       { role: 'user', content: buildChunkExtractionUserPrompt(chunk, chunkIndex, totalChunks) },
     ],
+    schema: CHUNK_EXTRACTION_JSON_SCHEMA,
+    schemaName: 'ChunkEvidenceExtraction',
     temperature: 0.1,
     max_tokens: maxTokens,
   };
-
-  // Thinking models: use reasoning_effort:'low' so minimal tokens go to
-  // reasoning and the bulk of max_tokens remains for JSON output.
-  // Do NOT set response_format — thinking models produce mixed content.
-  if (thinking) {
-    request.reasoning_effort = 'low';
-  }
-
-  return request;
 }
 
-// ─── Schema / diagnostics ─────────────────────────────────────────────────────
-
 export function getExtractionSchema() {
-  return ChunkEvidenceSchema;
+  return CHUNK_EXTRACTION_JSON_SCHEMA;
 }
 
 export function getExtractionRequestDiagnostics(request, chunk) {
-  const systemPrompt = request.messages?.find(m => m.role === 'system')?.content || '';
-  const userPrompt = request.messages?.find(m => m.role === 'user')?.content || '';
+  const systemPrompt = request.messages?.find((m) => m.role === 'system')?.content || '';
+  const userPrompt = request.messages?.find((m) => m.role === 'user')?.content || '';
   const serializedMessages = (chunk?.messages || [])
-    .filter(m => m.type === 'message')
-    .map(m => `[${m.id}] [${m.timestamp}] ${m.sender || 'Unknown'}: ${m.text}`)
+    .filter((m) => m.type === 'message')
+    .map((m) => `[${m.id}] [${m.timestamp}] ${m.sender || 'Unknown'}: ${m.text}`)
     .join('\n');
 
   return {
     chunk: chunk?.id || '',
-    messages: (chunk?.messages || []).filter(m => m.type === 'message').length,
+    messages: (chunk?.messages || []).filter((m) => m.type === 'message').length,
     model: request.model,
-    reasoningEffort: request.reasoning_effort || 'default',
     maxTokens: request.max_tokens,
     systemPromptChars: systemPrompt.length,
     userPromptChars: userPrompt.length,
-    schemaChars: 0,
     serializedMessagesChars: serializedMessages.length,
     totalSerializedRequestChars: JSON.stringify(request).length,
   };

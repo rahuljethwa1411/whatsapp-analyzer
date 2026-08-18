@@ -1,42 +1,25 @@
 /**
- * Token-Aware Extraction Chunker — Phase 1 Fix
+ * Token-Aware 20-Chunk Partitioning & Splitting Engine.
  *
- * Creates AnalysisChunks that are guaranteed to be within the extraction
- * token budget BEFORE any API call. This eliminates the old
- * "chunk too large → split → retry" pattern.
- *
- * Algorithm:
- *   For every message (in chronological order):
- *     Estimate its formatted extraction-prompt token cost.
- *     If adding it would push the current chunk over MAX_MESSAGE_PAYLOAD_TOKENS
- *     or MAX_MESSAGES_PER_CHUNK → finalize the current chunk, start a new one.
- *
- * Key guarantees:
- *   ✓ Every chunk's raw-message token count ≤ MAX_MESSAGE_PAYLOAD_TOKENS
- *   ✓ Full formatted user prompt ≤ MAX_EXTRACTION_INPUT_TOKENS (with overhead)
- *   ✓ Messages are never reordered or silently dropped
- *   ✓ Oversized individual messages are truncated before packing
- *   ✓ No sampleEvenly downsampling — all messages are covered
- *   ✓ Pre-flight validation gate before each API call
+ * Guarantees:
+ *   ✓ Divides all messages chronologically into ~TOP_LEVEL_CHUNK_COUNT (default 20) logical chunks
+ *   ✓ Splits at message boundaries based on token weight
+ *   ✓ Never mutates, truncates, drops, or reorders messages
  */
 
 import {
   estimateChunkPayloadTokens,
   estimateMessageTokens,
-  truncateMessageIfOversized,
   MAX_EXTRACTION_INPUT_TOKENS,
   MAX_MESSAGE_PAYLOAD_TOKENS,
-  MAX_MESSAGES_PER_CHUNK,
-  MAX_EXTRACTION_CHUNKS,
   estimateExtractionRequest,
   PROMPT_OVERHEAD_TOKENS,
   SAFE_EXTRACTION_INPUT_TOKENS,
+  TOP_LEVEL_CHUNK_COUNT,
 } from './tokenEstimator.js';
 import { buildExtractionRequest } from './ai/extractionRequest.js';
 
 const SESSION_GAP_MS = 2 * 60 * 60 * 1000; // 2 hours
-
-// ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
  * Splits an array of messages into two balanced parts based on estimated token weight
@@ -50,7 +33,7 @@ export function splitMessagesByTokenWeight(messages) {
     return [messages || [], []];
   }
 
-  const costs = messages.map(m => estimateMessageTokens(m));
+  const costs = messages.map((m) => estimateMessageTokens(m));
   const totalCost = costs.reduce((sum, c) => sum + c, 0);
   const halfCost = totalCost / 2;
 
@@ -77,17 +60,15 @@ export function splitMessagesByTokenWeight(messages) {
 
 /**
  * Packs a logical chunk into session-aware, token-safe API subchunks upfront.
- * Preserves full conversation context and silence gaps without runtime recursive splitting.
  *
  * @param {Object} logicalChunk
  * @param {number} [budget]
  * @returns {Array} Array of token-safe subchunks
  */
 export function packMessagesIntoTokenSafeSubchunks(logicalChunk, budget = SAFE_EXTRACTION_INPUT_TOKENS) {
-  const messages = (logicalChunk.messages || []).filter(m => m.type === 'message');
+  const messages = (logicalChunk.messages || []).filter((m) => m.type === 'message');
   if (messages.length === 0) return [];
 
-  // If the whole chunk is already within budget, return as 1 subchunk
   const singleReq = buildExtractionRequest(logicalChunk, 0, 1);
   const singleEst = estimateExtractionRequest(singleReq);
   if (singleEst.estimatedInputTokens <= budget) {
@@ -164,11 +145,7 @@ export function packMessagesIntoTokenSafeSubchunks(logicalChunk, budget = SAFE_E
 }
 
 /**
- * Creates token-safe AnalysisChunks from a flat message list.
- *
- * Emits ~TOP_LEVEL_CHUNK_COUNT (default 20) logical chunks.
- * These are logical ranges — the server pre-flights each chunk and performs
- * internal adaptive recovery splitting only when a chunk exceeds the safe token budget.
+ * Creates ~TOP_LEVEL_CHUNK_COUNT (default 20) logical chunks from any message list.
  *
  * @param {Array} _sessions     — ConversationSession[] (unused, kept for API compat)
  * @param {Array} allMessages   — ChatMessage[] (all message types, including media/system)
@@ -177,19 +154,15 @@ export function packMessagesIntoTokenSafeSubchunks(logicalChunk, budget = SAFE_E
  * @returns {Array} AnalysisChunk[]
  */
 export function createChunks(_sessions, allMessages, config = {}) {
-  // ── 1. Filter to normal text messages, sorted chronologically ──────────────
   const normalMessages = allMessages
-    .filter(m => m.type === 'message' && m.text && m.text.trim().length > 0)
+    .filter((m) => m.type === 'message' && m.text && m.text.trim().length > 0)
     .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
   if (normalMessages.length === 0) {
-    console.log('[Chunker] No normal messages found — returning empty chunk list.');
     return [];
   }
 
-  // ── 2. Top-level logical partitioning: create approximately
-  // `targetTopLevel` logical chunks (default 20).
-  const targetTopLevel = Number(process.env.TOP_LEVEL_CHUNK_COUNT || config.topLevelChunkCount || 20) || 20;
+  const targetTopLevel = Number(config.topLevelChunkCount || TOP_LEVEL_CHUNK_COUNT || 20) || 20;
   const topLevelCount = Math.max(1, Math.min(targetTopLevel, normalMessages.length));
   const approxMsgsPerTopLevel = Math.ceil(normalMessages.length / topLevelCount);
 
@@ -219,18 +192,11 @@ export function createChunks(_sessions, allMessages, config = {}) {
     return finalizeChunk(idx, { messages: acc.messages, sessionIds: acc.sessionIds });
   });
 
-  console.log(`[Chunker] Initial partition: ${normalMessages.length} messages → ${chunks.length} logical chunks`);
-
   return chunks;
 }
 
 /**
- * Pre-flight validation: checks that a chunk's estimated prompt tokens are
- * within budget BEFORE sending to the API.
- *
- * @param {Object} chunk        — AnalysisChunk
- * @param {number} [budget]     — token limit (defaults to MAX_EXTRACTION_INPUT_TOKENS)
- * @returns {{ ok: boolean, estimated: number, budget: number }}
+ * Pre-flight validation: checks that a chunk's estimated prompt tokens are within budget.
  */
 export function validateChunkTokenBudget(chunk, budget = MAX_EXTRACTION_INPUT_TOKENS) {
   const request = buildExtractionRequest(chunk, 0, 999999);
@@ -245,40 +211,11 @@ export function validateChunkTokenBudget(chunk, budget = MAX_EXTRACTION_INPUT_TO
   };
 }
 
-// ─── Private Helpers ─────────────────────────────────────────────────────────
-
-function buildSessionGroups(sortedMessages) {
-  const groups = [];
-  let group = [sortedMessages[0]];
-
-  for (let i = 1; i < sortedMessages.length; i++) {
-    const gap = new Date(sortedMessages[i].timestamp) - new Date(sortedMessages[i - 1].timestamp);
-    if (gap <= SESSION_GAP_MS) {
-      group.push(sortedMessages[i]);
-    } else {
-      groups.push(group);
-      group = [sortedMessages[i]];
-    }
-  }
-  if (group.length > 0) groups.push(group);
-  return groups;
-}
-
-function newAccumulator() {
-  return { messages: [], tokens: 0, sessionIds: [] };
-}
-
-function addSession(acc, sessionId) {
-  if (!acc.sessionIds.includes(sessionId)) {
-    acc.sessionIds.push(sessionId);
-  }
-}
-
 function finalizeChunk(index, acc) {
   const sorted = [...acc.messages].sort(
     (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
   );
-  const participants = [...new Set(sorted.map(m => m.sender).filter(Boolean))];
+  const participants = [...new Set(sorted.map((m) => m.sender).filter(Boolean))];
 
   return {
     id: `chunk_${index + 1}`,
@@ -286,7 +223,7 @@ function finalizeChunk(index, acc) {
     endAt: sorted[sorted.length - 1]?.timestamp?.toString() || '',
     sessionIds: acc.sessionIds,
     participants,
-    messages: sorted.map(m => ({
+    messages: sorted.map((m) => ({
       id: m.id,
       timestamp: m.timestamp?.toString() || '',
       sender: m.sender,

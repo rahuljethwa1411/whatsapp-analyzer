@@ -146,7 +146,7 @@ export function PreviewGate({ onUnlock, unlockedCount }: PreviewGateProps) {
           <div className="preview-gate-header">
             <div className="preview-gate-badge-row">
               <span className="gate-pill-badge vip-pill">🔒 CLASSIFIED DOSSIER</span>
-              <span className="gate-pill-badge discount-pill">🔥 45% OFF • LAUNCH OFFER</span>
+              <span className="gate-pill-badge discount-pill">🔥 50% OFF • LAUNCH OFFER</span>
             </div>
             <h2 className="preview-gate-headline">
               You've Unlocked 20% of the Story.
@@ -226,11 +226,47 @@ export function PreviewGate({ onUnlock, unlockedCount }: PreviewGateProps) {
               <div className="price-tag-wrap">
                 <span className="original-price-strike">₹{APP_CONFIG.ORIGINAL_PRICE_INR}</span>
                 <span className="current-price-val">₹{APP_CONFIG.REPORT_PRICE_INR}</span>
-                <span className="savings-chip">SAVE ₹{APP_CONFIG.ORIGINAL_PRICE_INR - APP_CONFIG.REPORT_PRICE_INR}</span>
+                <span className="savings-chip">50% LAUNCH OFFER</span>
               </div>
               <p className="price-guarantee-note">
-                One-time unlock • Lifetime private access • Instant PDF download
+                One-time unlock for this archive • Lifetime private access • Instant 6-page PDF download
               </p>
+            </div>
+
+            {/* Full Package Value Proposition */}
+            <div className="preview-package-features" style={{
+              background: 'rgba(204, 81, 61, 0.06)',
+              border: '1px solid rgba(204, 81, 61, 0.25)',
+              borderRadius: '10px',
+              padding: '16px 20px',
+              marginBottom: '20px',
+              textAlign: 'left'
+            }}>
+              <div style={{
+                color: '#ff8a75',
+                fontFamily: '"DM Mono", monospace',
+                fontSize: '11px',
+                fontWeight: 700,
+                letterSpacing: '1px',
+                marginBottom: '10px',
+                textTransform: 'uppercase'
+              }}>
+                📦 WHAT'S UNLOCKED FOR ₹{APP_CONFIG.REPORT_PRICE_INR} (ONE-TIME):
+              </div>
+              <ul style={{
+                margin: 0,
+                paddingLeft: '18px',
+                color: '#e8e0d2',
+                fontSize: '13px',
+                lineHeight: '1.8'
+              }}>
+                <li><strong>10 Unhinged Documentary Chapters</strong> with verified quotes & receipts</li>
+                <li><strong>Full Relationship Timeline & Era Maps</strong> with date ranges & shifts</li>
+                <li><strong>Inside Joke & Lore Origins</strong> (how nicknames & running gags began)</li>
+                <li><strong>The Satirical Awards Ceremony</strong> (custom roast trophies)</li>
+                <li><strong>Official Relationship Verdict & Badge</strong> with shareable quote cards</li>
+                <li><strong>Downloadable 6-Page Printable PDF Dossier</strong> in high-res editorial layout</li>
+              </ul>
             </div>
 
             {/* Email Input Field */}
