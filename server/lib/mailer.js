@@ -4,6 +4,7 @@
  */
 
 import nodemailer from 'nodemailer';
+import { generateUnlockToken } from './razorpay.js';
 
 /**
  * Creates and configures the Nodemailer SMTP transporter.
@@ -36,8 +37,13 @@ function generateEmailHtml({
   overallTone = 'Chaotic Comfort',
   verdict = 'A legendary conversation archive documented forever.',
   paymentId = 'N/A',
-  reportUrl = 'http://localhost:5173/report',
+  reportUrl,
 }) {
+  const baseUrl = process.env.APP_URL || 'http://localhost:5173';
+  const token = generateUnlockToken(paymentId || 'verified');
+  const finalReportUrl =
+    reportUrl ||
+    `${baseUrl.replace(/\/$/, '')}/report?payment_id=${encodeURIComponent(paymentId || 'verified')}&token=${encodeURIComponent(token)}&download=true`;
   return `
 <!DOCTYPE html>
 <html>
@@ -95,7 +101,7 @@ function generateEmailHtml({
         </div>
 
         <div class="button-wrap">
-          <a href="${reportUrl}" class="btn">View Unlocked Dossier & Download PDF →</a>
+          <a href="${finalReportUrl}" class="btn">View Unlocked Dossier & Download PDF →</a>
         </div>
 
         <p style="font-size: 12px; color: #8c8270; text-align: center; margin: 0;">

@@ -146,11 +146,12 @@ export async function openRazorpayCheckout(options: CheckoutOptions): Promise<vo
       },
       handler: async (response: RazorpaySuccessResponse) => {
         try {
-          // 3. Verify signature on backend & trigger email dispatch
+          // 3. Verify signature on backend & trigger email dispatch & snapshot saving
           const userEmail = options.prefill?.email || options.notes?.email;
           const verificationResult = await verifyPayment({
             ...response,
             email: userEmail,
+            reportSnapshot: (options as any).reportSnapshot,
           } as any);
           options.onSuccess?.(verificationResult);
         } catch (err: any) {

@@ -121,3 +121,29 @@ export function verifyRazorpaySignature({
       : 'Payment verification failed: signature mismatch.',
   };
 }
+
+/**
+ * Generates a tamper-proof HMAC unlock token for email delivery links.
+ */
+export function generateUnlockToken(paymentId) {
+  const keySecret = process.env.RAZORPAY_KEY_SECRET || 'afterchat_secret_fallback';
+  return crypto
+    .createHmac('sha256', keySecret)
+    .update(`afterchat_unlock:${paymentId}`)
+    .digest('hex');
+}
+
+/**
+ * Cryptographically verifies an email unlock token using timing-safe comparison.
+ */
+export function verifyUnlockToken(paymentId, token) {
+  if (!paymentId || !token) return false;
+  const expected = generateUnlockToken(paymentId);
+  try {
+    const a = Buffer.from(expected, 'utf8');
+    const b = Buffer.from(token, 'utf8');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}

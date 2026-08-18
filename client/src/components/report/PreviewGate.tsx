@@ -102,13 +102,21 @@ export function PreviewGate({ onUnlock, unlockedCount }: PreviewGateProps) {
     setLoading(true);
     setErrorMessage(null);
     setSuccessMessage(null);
-    setEmailError(null);
+    const savedAnalysis = localStorage.getItem('afterchat_analysis');
+    const savedIntelligence = localStorage.getItem('afterchat_intelligence');
+    const savedStory = localStorage.getItem('afterchat_story');
+    const reportSnapshot = savedAnalysis || savedStory ? {
+      analysis: savedAnalysis ? JSON.parse(savedAnalysis) : null,
+      intelligence: savedIntelligence ? JSON.parse(savedIntelligence) : null,
+      story: savedStory ? JSON.parse(savedStory) : null,
+    } : null;
 
     await openRazorpayCheckout({
       amount: APP_CONFIG.REPORT_PRICE_PAISE,
       currency: 'INR',
       name: 'Afterchat AI',
       description: 'Unlock Full 6-Page Intelligence Dossier',
+      reportSnapshot,
       prefill: {
         email: trimmedEmail,
       },

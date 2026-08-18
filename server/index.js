@@ -325,6 +325,13 @@ app.post('/api/verify-payment', async (req, res) => {
       });
     }
 
+    // Persist full report snapshot for future cross-device and email access
+    const { reportSnapshot } = req.body || {};
+    if (reportSnapshot) {
+      const { saveReportSnapshot } = await import('./lib/reportStore.js');
+      saveReportSnapshot(razorpay_payment_id, reportSnapshot);
+    }
+
     return res.status(200).json({
       success: true,
       verified: true,
@@ -341,6 +348,27 @@ app.post('/api/verify-payment', async (req, res) => {
       error: err.message || 'Payment verification failed.',
     });
   }
+});
+
+// Endpoint to verify HMAC unlock tokens from email links and retrieve saved report
+app.post('/api/verify-unlock-token', async (req, res) => {
+  const { verifyUnlockToken } = await import('./lib/razorpay.js');
+  const { getReportSnapshot } = await import('./lib/reportStore.js');
+  const { payment_id, token } = req.body || {};
+
+  if (!payment_id || !token) {
+    return res.status(400).json({ success: false, valid: false, error: 'Missing payment_id or token.' });
+  }
+
+  const isValid = verifyUnlockToken(payment_id, token);
+  const snapshot = isValid ? getReportSnapshot(payment_id) : null;
+
+  return res.json({
+    success: true,
+    valid: isValid,
+    reportSnapshot: snapshot,
+    message: isValid ? 'Token verified successfully.' : 'Invalid or tampered unlock token.',
+  });
 });
 
 // Dedicated endpoint to send or resend full report email

@@ -3,7 +3,7 @@
  * Master container for Phase 4 AfterChat report experience.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Navbar } from '../afterchat/Navbar';
 import { Footer } from '../afterchat/Footer';
 import { ContactModal } from '../afterchat/ContactModal';
@@ -41,6 +41,10 @@ export function ReportShell() {
   const { story, status: storyStatus, generateStory, accessMode, setAccessMode } = useStory();
 
   const handleDownloadPdf = async () => {
+    if (!isUnlocked) {
+      handleUnlockRequest();
+      return;
+    }
     if (isExportingPdf) return;
     try {
       setIsExportingPdf(true);
@@ -64,6 +68,23 @@ export function ReportShell() {
       generateStory(intelligence, analysis);
     }
   }, [intelligence, analysis, story, storyStatus, generateStory]);
+
+  // Auto-download PDF if user arrives via email link with ?download=true
+  const hasAutoDownloaded = useRef(false);
+  useEffect(() => {
+    if (accessMode === 'full' && analysis && intelligence && story && !hasAutoDownloaded.current && !isExportingPdf) {
+      if (typeof window !== 'undefined' && window.location.search) {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('download') === 'true') {
+          hasAutoDownloaded.current = true;
+          // Small timeout so DOM components and story data are fully mounted
+          setTimeout(() => {
+            handleDownloadPdf();
+          }, 800);
+        }
+      }
+    }
+  }, [accessMode, analysis, intelligence, story, isExportingPdf]);
 
   useEffect(() => {
     const handleScroll = () => {

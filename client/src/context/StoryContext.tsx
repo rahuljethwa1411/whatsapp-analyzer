@@ -7,6 +7,7 @@ import {
   createContext,
   useContext,
   useState,
+  useEffect,
   useCallback,
   ReactNode,
 } from 'react';
@@ -49,12 +50,60 @@ export function StoryProvider({ children }: { children: ReactNode }) {
   const [accessMode, setAccessModeState] = useState<ReportAccess>(() => {
     if (APP_CONFIG.UNLOCK_ALL) return 'full';
     try {
-      // Only keep 'full' if explicitly paid in this session
+      // Only keep 'full' if cryptographically verified by server payment
       const paid = sessionStorage.getItem('afterchat_payment_verified');
       if (paid === 'true') return 'full';
     } catch { /* ignore */ }
     return 'preview';
   });
+
+  // Verify cryptographic email unlock token on mount
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.location.search) return;
+    const params = new URLSearchParams(window.location.search);
+    const paymentId = params.get('payment_id');
+    const token = params.get('token');
+
+    if (paymentId && token) {
+      fetch('/api/verify-unlock-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payment_id: paymentId, token }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data?.success && data?.valid) {
+            setAccessModeState('full');
+            if (data.reportSnapshot) {
+              if (data.reportSnapshot.story) {
+                setStory(data.reportSnapshot.story);
+                setStatus('done');
+                try {
+                  localStorage.setItem('afterchat_story', JSON.stringify(data.reportSnapshot.story));
+                } catch { /* ignore */ }
+              }
+              if (data.reportSnapshot.analysis) {
+                try {
+                  localStorage.setItem('afterchat_analysis', JSON.stringify(data.reportSnapshot.analysis));
+                } catch { /* ignore */ }
+              }
+              if (data.reportSnapshot.intelligence) {
+                try {
+                  localStorage.setItem('afterchat_intelligence', JSON.stringify(data.reportSnapshot.intelligence));
+                } catch { /* ignore */ }
+              }
+            }
+            try {
+              sessionStorage.setItem('afterchat_payment_verified', 'true');
+              localStorage.setItem('afterchat_access_mode', 'full');
+            } catch { /* ignore */ }
+          }
+        })
+        .catch((err) => {
+          console.warn('[StoryContext] Token verification failed:', err);
+        });
+    }
+  }, []);
 
   const setAccessMode = useCallback((mode: ReportAccess) => {
     setAccessModeState(mode);

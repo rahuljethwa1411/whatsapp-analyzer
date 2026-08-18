@@ -36,6 +36,7 @@ export interface CheckoutOptions {
   theme?: {
     color?: string;
   };
+  reportSnapshot?: any;
   onSuccess?: (response: RazorpayVerificationResponse) => void;
   onError?: (error: Error | string) => void;
   onDismiss?: () => void;
