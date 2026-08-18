@@ -45,12 +45,13 @@ Every era, lore item, and profile MUST describe the REAL, CONCRETE STORY:
 ═══════════════════════════════════════════════════
 
 1. eras (Relationship Epochs):
-   - Group the timeline into 4–6 meaningful MACRO-ERAS based on the ACTUAL shifts in what they talked about and their activity levels.
+   - Group the ENTIRE conversation timeline from the very first text to the latest text into 4–6 chronological MACRO-PHASES.
+   - Spread the dates evenly across the full duration (e.g. Era 1: Early months, Era 2: Mid-year shift, Era 3: Late-year developments, Era 4: Current dynamic). Do NOT collapse all eras into the same 2 weeks!
    - For each era:
-     * title: Bold, unhinged, viral era headline (e.g. "The Great Ticket Debacle & Financial Panic Era", "The 45-Day Disappearing Act & 2 AM Check-In", "The Midnight Reel Influx & Unanswered Calls Phase").
-     * startDate & endDate: Exact chronological date range (YYYY-MM-DD format, e.g. "2024-10-02" to "2024-10-28").
-     * summary: 120–180 WORDS of sharp, witty, observational narrative detailing what they actually discussed, their jokes, who said what, and their dynamic.
-     * dominantTopics: 2–4 specific topic labels reflecting the real messages (e.g. ["Ticket booking", "Football banter", "Late-night check-ins"]).
+     * title: Bold, unhinged, viral era headline reflecting the primary development of that macro-phase (e.g. "The Polite Formality & Reel Discovery Phase", "The Midnight Rant & Exam Chaos Era", "The Cold-War Silence & The Grand Reconnection").
+     * startDate & endDate: Distinct, chronological date ranges (YYYY-MM-DD format) spanning the full chat archive.
+     * summary: 120–180 WORDS of sharp, witty, observational narrative detailing what they actually discussed during this macro-phase, their texting rhythm, and how their dynamic evolved.
+     * dominantTopics: 2–4 specific topic labels reflecting the real messages of that specific time window.
      * evidence: Array of real messageId strings from the evidence store.
 
 2. participantProfiles:

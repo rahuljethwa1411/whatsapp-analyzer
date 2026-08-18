@@ -4,6 +4,7 @@ export interface RazorpayOrderResponse {
   amount: number;
   currency: string;
   receipt?: string;
+  key_id?: string;
   error?: string;
 }
 

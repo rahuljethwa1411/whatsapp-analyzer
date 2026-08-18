@@ -261,6 +261,7 @@ app.post('/api/create-order', async (req, res) => {
       amount: order.amount,
       currency: order.currency,
       receipt: order.receipt,
+      key_id: process.env.RAZORPAY_KEY_ID || 'rzp_live_TR8buCFEtEpBLr',
     });
   } catch (err) {
     console.error('[Payment] Create order error:', err.message);

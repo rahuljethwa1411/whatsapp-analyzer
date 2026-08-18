@@ -38,18 +38,19 @@ Write like an insightful, hilarious friend who read every single text and genuin
 🎬 CRITICAL RULE: ONE CONTINUOUS SCENE/TOPIC PER CHAPTER (NO CHOPPY TOPIC-JUMPING!):
 ═══════════════════════════════════════════════════
 Each of the 10 chapters MUST tell ONE focused, continuous, unbroken narrative arc from start to finish.
-- ❌ STRICTLY FORBIDDEN: Jumping between disconnected months and unrelated topics within the same chapter! (e.g. Do NOT write 2 sentences about an October birthday, then suddenly jump to a November exam, then mention a random meme in December. That feels choppy and jarring!)
-- ✅ REQUIRED: Stay on ONE single topic, era, or thematic event throughout the entire chapter:
-  - Chapter 1: The Origin Story / First Contact (Stay strictly in the opening phase).
-  - Chapter 2: The Core Texting Rituals & Quirks (Explore one continuous habit or texting style).
-  - Chapter 3: The Great Silence / Ghosting Episode (Tell the continuous story of that specific gap and the return text).
-  - Chapter 4: A Dedicated Inside Joke or Lore Exhibit (Tell the full origin, escalation, and running bit of THAT specific joke).
-  - Chapter 5: The Unfulfilled Plans / Phantom Trip Debacle (Tell the continuous story of that one plan that never happened).
-  - Chapter 6: The Petty Disagreement / Bickering Archive (Tell the unbroken scene of that specific petty fight).
-  - Chapter 7: The Contradiction Exhibit (Deep dive into ONE specific contradiction: what was claimed vs what was done).
-  - Chapter 8: The Long-Distance Callback (Tell the specific setup from early on and its payoff later).
-  - Chapter 9: The Rare Sincere / Vulnerable Moment (Focus on that specific moment of unexpected warmth).
-  - Chapter 10: The Current Status & Final Verdict (A continuous, cohesive conclusion of their dynamic today).
+- ❌ STRICTLY FORBIDDEN: Repeating the same topic across multiple chapters! If Chapter 1 or 5 is about ticket booking or a trip, all other chapters MUST explore completely different topics (e.g. 2 AM reel drops, food debts, exam panic, sleep contradictions, call-hanging habits, inside jokes).
+- ❌ DO NOT REPEAT ERA TITLES: The 10 story chapters are standalone deep-dive documentary episodes. They must NOT copy or rehash the same titles as the macro-eras!
+- ✅ REQUIRED: 10 distinct, non-overlapping episode themes:
+  - Chapter 1: The Origin Story / First Contact (The opening dynamic and first impressions).
+  - Chapter 2: The Core Texting Rituals & 2 AM Habits (Observed texting quirks, rapid-fire memes, response latency).
+  - Chapter 3: The Great Silence / The Ghosting Gap (The longest gap of zero texts and the return message).
+  - Chapter 4: Inside Lore Exhibit (The origin and evolution of their most iconic running joke or nickname).
+  - Chapter 5: The Phantom Plans & Failed Outings (The full story of plans or trips that never happened).
+  - Chapter 6: The Petty Bickering & Sarcasm Archive (A specific, hilarious minor disagreement or food debate).
+  - Chapter 7: The Contradiction Case File (What someone claimed vs what they actually did in the chat).
+  - Chapter 8: The Long-Distance Callback (An early joke or promise that unexpectedly resurfaced months later).
+  - Chapter 9: The Rare Sincere / Vulnerable Moment (When the sarcasm softened into genuine care).
+  - Chapter 10: The Modern Dynamic & Forensic Verdict (How their conversation operates today).
 
 ═══════════════════════════════════════════════════
 🔥 SPECIFICITY & REAL PLOT DETAILS (NO VAGUE AI SUMMARY!):
@@ -139,32 +140,9 @@ export function buildStoryUserPrompt({
   const inv = intelligence._rawInvestigator || intelligence._investigatorResult || {};
   const participants = (metadata.participants || []).join(', ');
 
-  const erasSummary = (intelligence.eras || inv.eras || [])
-    .map(
-      (e, idx) =>
-        `Era ${idx + 1}: "${e.title}" (${e.startAt || e.startDate || ''} to ${e.endAt || e.endDate || ''}) — ${e.summary}`
-    )
-    .join('\n');
-
-  const patternsSummary = (inv.patterns || intelligence.patterns || [])
-    .map((p) => `- Pattern: "${p.pattern || p.title}" — ${p.explanation || p.description || ''}`)
-    .join('\n');
-
-  const contradictionsSummary = (inv.contradictions || [])
-    .map((c) => `- Contradiction: "${c.claim}" vs "${c.laterBehavior}" — ${c.explanation}`)
-    .join('\n');
-
-  const callbacksSummary = (inv.callbacks || [])
-    .map((cb) => `- Callback: earlier "${cb.earlier?.exactText || cb.earlier?.text || ''}" vs later "${cb.later?.exactText || cb.later?.text || ''}" — ${cb.connection}`)
-    .join('\n');
-
-  const loreSummary = (inv.lore || intelligence.lore || [])
-    .map((l) => `- Lore: "${l.name || l.title}" — ${l.origin || l.description || ''}`)
-    .join('\n');
-
-  const funnyMomentsSummary = (inv.funnyMoments || [])
-    .slice(0, 8)
-    .map((f) => `- Funny Moment: "${f.moment}" — ${f.whyFunny}`)
+  // Decouple from pre-baked summaries: pass timeline ranges and raw evidence so the story engine crafts 100% fresh, original narratives
+  const timelineRanges = (intelligence.eras || inv.eras || [])
+    .map((e, idx) => `Phase ${idx + 1}: ${e.startAt || e.startDate || ''} → ${e.endAt || e.endDate || ''} (Topics: ${(e.dominantTopics || []).join(', ') || 'Banter'})`)
     .join('\n');
 
   const topEvidence = (intelligence._evidenceStore || []).slice(0, 100);
@@ -189,11 +167,11 @@ GROUND TRUTH STATS:
 - Longest Streak: ${summaryStats.longestStreakDays ?? 0} consecutive active days
 - Top Emoji: ${summaryStats.mostUsedEmoji || '💀'}
 ${(summaryStats.topWords || []).filter((w) => w && w.length > 3).length > 0 ? `- Notable Topic Keywords: ${(summaryStats.topWords || []).filter((w) => w && w.length > 3).slice(0, 8).join(', ')}\n` : ''}
-RECURRING TOPICS DISCUSSED:
+RECURRING TOPICS DISCUSSED ACROSS THE ARCHIVE:
 ${(intelligence._evidenceStore || []).filter((e) => e.type === 'recurring_language' || e.type === 'recurring_topic').map((e) => e.connection || e.text).slice(0, 8).join(' | ') || 'Daily banter, shared life updates, inside jokes'}
 
-RELATIONSHIP ERAS:
-${erasSummary || 'Full conversation timeline'}
+CHRONOLOGICAL TIMELINE PHASES:
+${timelineRanges || 'Full conversation timeline'}
 
 OBSERVED BEHAVIORAL PATTERNS:
 ${patternsSummary || 'Banter, late-night check-ins, delayed replies, sarcasm, inside jokes'}
@@ -204,13 +182,7 @@ ${contradictionsSummary || 'None documented'}
 CALLBACKS ACROSS TIME:
 ${callbacksSummary || 'None documented'}
 
-LORE & INSIDE JOKES:
-${loreSummary || 'None documented'}
-
-FUNNY CHAT MOMENTS:
-${funnyMomentsSummary || 'None documented'}
-
-ACTUAL VERIFIED MESSAGE RECEIPTS (weave these real messages into quotes!):
+ACTUAL VERIFIED MESSAGE RECEIPTS (weave these real messages directly into quotes!):
 ${evidenceStoreSummary}
 
 ${formattedReceipts ? `\nCURATED RECEIPT CATALOG:\n${formattedReceipts}\n` : ''}

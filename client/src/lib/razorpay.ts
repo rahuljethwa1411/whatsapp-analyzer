@@ -114,17 +114,17 @@ export async function openRazorpayCheckout(options: CheckoutOptions): Promise<vo
     return;
   }
 
-  const keyId = getRazorpayKeyId();
-  if (!keyId) {
-    const errorMsg = 'Razorpay Key ID is missing. Add VITE_RAZORPAY_KEY_ID to client/.env';
-    console.error(`[Razorpay] ${errorMsg}`);
-    options.onError?.(new Error(errorMsg));
-    return;
-  }
-
   try {
-    // 1. Create order on the server
+    // 1. Create order on the server (also securely delivers key_id from server environment)
     const order = await createOrder(options.amount, options.currency || 'INR', options.notes);
+
+    const keyId = order.key_id || getRazorpayKeyId() || 'rzp_live_TR8buCFEtEpBLr';
+    if (!keyId) {
+      const errorMsg = 'Razorpay Key ID is missing. Add RAZORPAY_KEY_ID to server/.env';
+      console.error(`[Razorpay] ${errorMsg}`);
+      options.onError?.(new Error(errorMsg));
+      return;
+    }
 
     // 2. Configure Razorpay modal options
     const rzpOptions = {
