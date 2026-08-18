@@ -24,6 +24,8 @@ import { exportPdfDossier } from '../../lib/pdfExporter';
 import { openRazorpayCheckout } from '../../lib/razorpay';
 import { RazorpayVerificationResponse } from '../../types/razorpay';
 
+import { APP_CONFIG } from '../../config/appConfig';
+
 import { useChatAnalysis } from '../../context/ChatAnalysisContext';
 import { useIntelligence } from '../../context/IntelligenceContext';
 import { useStory } from '../../context/StoryContext';
@@ -81,7 +83,7 @@ export function ReportShell() {
 
     try {
       await openRazorpayCheckout({
-        amount: 49900, // ₹499 in paise
+        amount: APP_CONFIG.REPORT_PRICE_PAISE,
         currency: 'INR',
         name: 'Afterchat AI',
         description: 'Unlock Full 6-Page Intelligence Dossier',

@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { openRazorpayCheckout } from '../../lib/razorpay';
 import { RazorpayVerificationResponse } from '../../types/razorpay';
+import { APP_CONFIG } from '../../config/appConfig';
 
 interface RazorpayCheckoutButtonProps {
-  amountPaise?: number; // e.g. 54900 = ₹549
+  amountPaise?: number;
   planName?: string;
   description?: string;
   buttonText?: string;
@@ -14,7 +15,7 @@ interface RazorpayCheckoutButtonProps {
 }
 
 export function RazorpayCheckoutButton({
-  amountPaise = 54900,
+  amountPaise = APP_CONFIG.REPORT_PRICE_PAISE,
   planName = 'Afterchat Full 6-Page Intelligence Dossier',
   description = 'Complete Uncensored WhatsApp Conversation Intelligence Report',
   buttonText,

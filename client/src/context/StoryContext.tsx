@@ -16,6 +16,8 @@ import { ChatAnalysis } from '../types/analysis';
 
 import { buildFallbackStory } from '../lib/storyFallback';
 
+import { APP_CONFIG } from '../config/appConfig';
+
 interface StoryContextType {
   story: Story | null;
   status: 'idle' | 'loading' | 'done' | 'error';
@@ -43,14 +45,38 @@ export function StoryProvider({ children }: { children: ReactNode }) {
     localStorage.getItem('afterchat_story') ? 'done' : 'idle'
   );
   const [error, setError] = useState<string | null>(null);
-  const [accessMode, setAccessMode] = useState<ReportAccess>('preview');
+
+  const [accessMode, setAccessModeState] = useState<ReportAccess>(() => {
+    if (APP_CONFIG.UNLOCK_ALL) return 'full';
+    try {
+      // Only keep 'full' if explicitly paid in this session
+      const paid = sessionStorage.getItem('afterchat_payment_verified');
+      if (paid === 'true') return 'full';
+    } catch { /* ignore */ }
+    return 'preview';
+  });
+
+  const setAccessMode = useCallback((mode: ReportAccess) => {
+    setAccessModeState(mode);
+    try {
+      if (mode === 'full') {
+        sessionStorage.setItem('afterchat_payment_verified', 'true');
+      } else {
+        sessionStorage.removeItem('afterchat_payment_verified');
+      }
+      localStorage.setItem('afterchat_access_mode', mode);
+    } catch { /* ignore */ }
+  }, []);
 
   const resetStory = useCallback(() => {
     setStory(null);
     setStatus('idle');
     setError(null);
+    setAccessModeState(APP_CONFIG.UNLOCK_ALL ? 'full' : 'preview');
     try {
+      sessionStorage.removeItem('afterchat_payment_verified');
       localStorage.removeItem('afterchat_story');
+      localStorage.removeItem('afterchat_access_mode');
     } catch { /* ignore */ }
   }, []);
 

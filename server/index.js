@@ -255,9 +255,20 @@ app.post('/api/create-order', async (req, res) => {
 
 app.post('/api/verify-payment', async (req, res) => {
   const { verifyRazorpaySignature } = await import('./lib/razorpay.js');
+  const { sendReportEmail } = await import('./lib/mailer.js');
 
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body || {};
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      email,
+      participants,
+      totalMessages,
+      storyTitle,
+      overallTone,
+      verdict,
+    } = req.body || {};
 
     if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
       return res.status(400).json({
@@ -280,12 +291,28 @@ app.post('/api/verify-payment', async (req, res) => {
       });
     }
 
+    // Trigger asynchronous automated report email dispatch
+    if (email && typeof email === 'string' && email.includes('@')) {
+      sendReportEmail({
+        to: email.trim(),
+        participants: participants || 'WhatsApp Chat Participants',
+        totalMessages: totalMessages || 0,
+        storyTitle: storyTitle || 'The Complete WhatsApp Intelligence Dossier',
+        overallTone: overallTone || 'Chaotic Comfort',
+        verdict: verdict || 'A legendary conversation archive documented forever.',
+        paymentId: razorpay_payment_id,
+      }).catch((mailErr) => {
+        console.error('[Payment] Automated email dispatch failed:', mailErr.message);
+      });
+    }
+
     return res.status(200).json({
       success: true,
       verified: true,
       message: result.message,
       payment_id: razorpay_payment_id,
       order_id: razorpay_order_id,
+      email_dispatched: !!(email && email.includes('@')),
     });
   } catch (err) {
     console.error('[Payment] Verify signature error:', err.message);
@@ -293,6 +320,40 @@ app.post('/api/verify-payment', async (req, res) => {
     return res.status(status).json({
       success: false,
       error: err.message || 'Payment verification failed.',
+    });
+  }
+});
+
+// Dedicated endpoint to send or resend full report email
+app.post('/api/send-report-email', async (req, res) => {
+  const { sendReportEmail } = await import('./lib/mailer.js');
+
+  try {
+    const { to, participants, totalMessages, storyTitle, overallTone, verdict, paymentId } = req.body || {};
+
+    if (!to || !to.includes('@')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid recipient email address is required.',
+      });
+    }
+
+    const mailResult = await sendReportEmail({
+      to,
+      participants,
+      totalMessages,
+      storyTitle,
+      overallTone,
+      verdict,
+      paymentId: paymentId || 'VERIFIED_PAYMENT',
+    });
+
+    return res.status(mailResult.success ? 200 : 500).json(mailResult);
+  } catch (err) {
+    console.error('[Mailer] Endpoint error:', err.message);
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Failed to dispatch report email.',
     });
   }
 });

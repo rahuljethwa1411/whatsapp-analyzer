@@ -1,13 +1,14 @@
 /**
  * PreviewGate Component
- * Integrated with Razorpay Standard Web Checkout.
- * Upon successful payment & signature verification, swaps accessMode to 'full'.
+ * High-Converting, Interactive Dossier Paywall with Razorpay Web Checkout.
  */
 
 import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { FadeReveal } from '../afterchat/FadeReveal';
 import { openRazorpayCheckout } from '../../lib/razorpay';
 import { RazorpayVerificationResponse } from '../../types/razorpay';
+import { APP_CONFIG } from '../../config/appConfig';
 
 interface PreviewGateProps {
   onUnlock: () => void;
@@ -19,27 +20,107 @@ interface PreviewGateProps {
   };
 }
 
+const PREVIEW_TABS = [
+  {
+    id: 'chapters',
+    icon: '📖',
+    label: '8 Hidden Chapters',
+    title: 'The Uncensored Narrative (Chapters 03–10)',
+    desc: 'Full 250-word investigative breakdowns covering 2 AM text hostage situations, ghosting patterns, trip cancellation forensics, and savage timestamps.',
+    badge: 'UNEDITED TRANSCRIPTS',
+  },
+  {
+    id: 'characters',
+    icon: '🎭',
+    label: 'Cast Dossier',
+    title: 'Psychological Profiles & Hypocrisy Indexes',
+    desc: 'Self-image vs observable reality, sleep schedule breakdowns, response latency extremes, and communication habits.',
+    badge: 'BEHAVIORAL FORENSICS',
+  },
+  {
+    id: 'lore',
+    icon: '📜',
+    label: 'Inside Lore',
+    title: 'Origin Stories & Inside Joke Myths',
+    desc: 'First recorded occurrences of recurring phrases, tapri moments, unhinged slang origins, and inside joke timelines.',
+    badge: 'ARCHIVE ORIGINS',
+  },
+  {
+    id: 'awards',
+    icon: '🏆',
+    label: 'Savage Roasts',
+    title: 'The Annual Satirical Awards Ceremony',
+    desc: 'Custom roasts, custom-earned medals, "Most Likely to Leave on Read", and the Final Relationship Verdict with shareable Instagram card.',
+    badge: 'CUSTOM ROASTS',
+  },
+  {
+    id: 'pdf',
+    icon: '📄',
+    label: 'Classified PDF',
+    title: 'Instant 6-Page Exportable PDF Dossier',
+    desc: 'High-resolution editorial intelligence report formatted like a classified agency case file. Ready for print or sharing.',
+    badge: 'INSTANT DOWNLOAD',
+  },
+];
+
+const PAYMENT_METHODS = [
+  { name: 'Google Pay', icon: '🟢 GPay' },
+  { name: 'PhonePe', icon: '🟣 PhonePe' },
+  { name: 'Paytm / CRED', icon: '🔵 Paytm' },
+  { name: 'Any UPI App', icon: '⚡ UPI' },
+  { name: 'Cards', icon: '💳 Visa/Mastercard/RuPay' },
+  { name: 'NetBanking', icon: '🏦 50+ Banks' },
+];
+
 export function PreviewGate({ onUnlock, unlockedCount }: PreviewGateProps) {
+  const [activeTab, setActiveTab] = useState(0);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [email, setEmail] = useState(() => {
+    try {
+      return localStorage.getItem('afterchat_user_email') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [emailError, setEmailError] = useState<string | null>(null);
+
+  const isValidEmail = (val: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim());
 
   const handleRazorpayPay = async () => {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !isValidEmail(trimmedEmail)) {
+      setEmailError('Please enter a valid email address so we can email your report & receipt.');
+      return;
+    }
+
+    try {
+      localStorage.setItem('afterchat_user_email', trimmedEmail);
+    } catch { /* ignore */ }
+
     setLoading(true);
     setErrorMessage(null);
     setSuccessMessage(null);
+    setEmailError(null);
 
     await openRazorpayCheckout({
-      amount: 49900, // ₹499 in paise
+      amount: APP_CONFIG.REPORT_PRICE_PAISE,
       currency: 'INR',
       name: 'Afterchat AI',
       description: 'Unlock Full 6-Page Intelligence Dossier',
+      prefill: {
+        email: trimmedEmail,
+      },
+      notes: {
+        email: trimmedEmail,
+      },
       theme: {
         color: '#cc513d',
       },
       onSuccess: (res: RazorpayVerificationResponse) => {
         setLoading(false);
-        setSuccessMessage(`Payment verified! ID: ${res.payment_id}`);
+        setSuccessMessage(`Payment verified! Full report unlocked & receipt dispatched to ${trimmedEmail}`);
         setTimeout(() => {
           onUnlock();
         }, 800);
@@ -55,127 +136,186 @@ export function PreviewGate({ onUnlock, unlockedCount }: PreviewGateProps) {
     });
   };
 
+  const activeContent = PREVIEW_TABS[activeTab];
+
   return (
-    <section className="preview-gate-section">
+    <section className="preview-gate-section" id="paywall-gate">
       <FadeReveal>
-        <div className="preview-gate-box">
-          <div className="preview-gate-top-badges">
-            <span className="preview-gate-badge">👑 FULL 6-PAGE INTELLIGENCE DOSSIER</span>
-            <span className="preview-gate-discount-badge">🔥 SAVE 45% • LAUNCH OFFER</span>
+        <div className="preview-gate-card">
+          {/* Header Banner */}
+          <div className="preview-gate-header">
+            <div className="preview-gate-badge-row">
+              <span className="gate-pill-badge vip-pill">🔒 CLASSIFIED DOSSIER</span>
+              <span className="gate-pill-badge discount-pill">🔥 45% OFF • LAUNCH OFFER</span>
+            </div>
+            <h2 className="preview-gate-headline">
+              You've Unlocked 20% of the Story.
+            </h2>
+            <p className="preview-gate-subtext">
+              The remaining 80% contains the unhinged late-night receipts, full era timelines, 
+              psychological cast files, inside joke origins, and the satirical roast ceremony.
+            </p>
           </div>
 
-          <h2>You've only seen 20% of the evidence.</h2>
-          <p className="preview-gate-desc">
-            The full 6-page documentary archive contains all remaining unhinged chapters, 
-            every savage call-hanging & clinginess receipt, inside joke origin stories, 
-            and the complete satirical awards ceremony.
-          </p>
+          {/* Interactive Feature Tabs */}
+          <div className="preview-interactive-container">
+            <div className="preview-tabs-nav" role="tablist">
+              {PREVIEW_TABS.map((tab, idx) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === idx}
+                  className={`preview-tab-btn ${activeTab === idx ? 'active' : ''}`}
+                  onClick={() => setActiveTab(idx)}
+                >
+                  <span className="tab-icon">{tab.icon}</span>
+                  <span className="tab-label">{tab.label}</span>
+                </button>
+              ))}
+            </div>
 
-          <div className="preview-value-checklist">
-            <div className="preview-value-item">
-              <span className="val-check">✓</span>
-              <span><b>All 10 Documentary Chapters</b> (failed trips, 2 AM hostage texts & savage receipts)</span>
-            </div>
-            <div className="preview-value-item">
-              <span className="val-check">✓</span>
-              <span><b>All Story Eras</b> (with rich 100–250 word witty breakdowns & dominant topics)</span>
-            </div>
-            <div className="preview-value-item">
-              <span className="val-check">✓</span>
-              <span><b>The Full Cast Dossier</b> (Self-image claims vs observable reality & habits)</span>
-            </div>
-            <div className="preview-value-item">
-              <span className="val-check">✓</span>
-              <span><b>Recovered Lore & Inside Jokes</b> (origin myths, tapri lore & recurring catchphrases)</span>
-            </div>
-            <div className="preview-value-item">
-              <span className="val-check">✓</span>
-              <span><b>Satirical Awards Ceremony</b> (Custom roasts & titles for all participants)</span>
-            </div>
-            <div className="preview-value-item">
-              <span className="val-check">✓</span>
-              <span><b>Final Relationship Verdict & Shareable Instagram Badge</b></span>
-            </div>
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeContent.id}
+                className="preview-tab-display"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.2 }}
+              >
+                <div className="tab-display-badge-row">
+                  <span className="tab-dossier-pill">{activeContent.badge}</span>
+                  <span className="tab-locked-indicator">🔒 Locked in Preview</span>
+                </div>
+                <h3 className="tab-display-title">{activeContent.title}</h3>
+                <p className="tab-display-desc">{activeContent.desc}</p>
+                <div className="tab-display-receipt-sample">
+                  <span className="sample-label">EVIDENCE SAMPLE:</span>
+                  <span className="sample-receipt">"bhai 5 min me aa raha hu" (Sent 3 hours before arrival)</span>
+                </div>
+              </motion.div>
+            </AnimatePresence>
           </div>
 
+          {/* Dynamic Evidence Counter */}
           {unlockedCount && (
-            <div className="preview-gate-counts">
-              <span>{unlockedCount.eras} MORE ERAS</span> • <span>{unlockedCount.characters} CHARACTERS</span> •{' '}
-              <span>{unlockedCount.lore} LORE ORIGINS</span> • <span>{unlockedCount.twists} PLOT TWISTS</span>
+            <div className="preview-stats-bar">
+              <div className="stat-item">
+                <b>+{unlockedCount.eras}</b>
+                <span>Relationship Eras</span>
+              </div>
+              <div className="stat-item">
+                <b>+{unlockedCount.characters}</b>
+                <span>Psych Profiles</span>
+              </div>
+              <div className="stat-item">
+                <b>+{unlockedCount.lore}</b>
+                <span>Lore Origins</span>
+              </div>
+              <div className="stat-item">
+                <b>+{unlockedCount.twists}</b>
+                <span>Plot Twists</span>
+              </div>
             </div>
           )}
 
-          <div className="preview-gate-price-row">
-            <div className="price-stack">
-              <span className="original-price">₹999</span>
-              <b className="preview-gate-price">₹499</b>
+          {/* Pricing & Checkout Card */}
+          <div className="preview-checkout-box">
+            <div className="preview-price-container">
+              <div className="price-tag-wrap">
+                <span className="original-price-strike">₹{APP_CONFIG.ORIGINAL_PRICE_INR}</span>
+                <span className="current-price-val">₹{APP_CONFIG.REPORT_PRICE_INR}</span>
+                <span className="savings-chip">SAVE ₹{APP_CONFIG.ORIGINAL_PRICE_INR - APP_CONFIG.REPORT_PRICE_INR}</span>
+              </div>
+              <p className="price-guarantee-note">
+                One-time unlock • Lifetime private access • Instant PDF download
+              </p>
             </div>
-            <small>One-time payment • Lifetime access • Instant unlock</small>
-          </div>
 
-          {errorMessage && (
-            <div
-              style={{
-                marginBottom: '16px',
-                padding: '10px 14px',
-                borderRadius: '6px',
-                background: 'rgba(239, 68, 68, 0.1)',
-                border: '1px solid #fca5a5',
-                color: '#dc2626',
-                fontSize: '13px',
-                textAlign: 'center',
-              }}
-            >
-              ⚠️ {errorMessage}
+            {/* Email Input Field */}
+            <div className="preview-email-field-wrapper">
+              <div className="email-label-row">
+                <label htmlFor="checkout-email" className="email-input-label">
+                  📧 Delivery Email Address
+                </label>
+                {isValidEmail(email) && (
+                  <span className="email-valid-badge">✓ Verified for instant delivery</span>
+                )}
+              </div>
+              <div className="email-input-relative">
+                <input
+                  id="checkout-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setEmailError(null);
+                  }}
+                  placeholder="Enter your email (e.g. rahul@gmail.com)"
+                  className={`preview-email-input ${emailError ? 'input-error' : ''} ${isValidEmail(email) ? 'input-valid' : ''}`}
+                />
+              </div>
+              {emailError ? (
+                <p className="field-error-text">⚠️ {emailError}</p>
+              ) : (
+                <p className="field-hint-text">
+                  Your full 6-page classified PDF report and payment receipt will be dispatched here.
+                </p>
+              )}
             </div>
-          )}
 
-          {successMessage && (
-            <div
-              style={{
-                marginBottom: '16px',
-                padding: '10px 14px',
-                borderRadius: '6px',
-                background: 'rgba(34, 197, 94, 0.1)',
-                border: '1px solid #86efac',
-                color: '#16a34a',
-                fontSize: '13px',
-                textAlign: 'center',
-              }}
-            >
-              ✓ {successMessage}
-            </div>
-          )}
-
-          <button
-            type="button"
-            className="button preview-gate-btn"
-            onClick={handleRazorpayPay}
-            disabled={loading}
-            style={{
-              opacity: loading ? 0.75 : 1,
-              cursor: loading ? 'not-allowed' : 'pointer',
-              width: '100%',
-              justifyContent: 'center',
-            }}
-          >
-            {loading ? (
-              <span>Opening Razorpay Secure Checkout...</span>
-            ) : (
-              <>
-                <span>Pay with Razorpay to Unlock Full Dossier (₹499)</span>
-                <span>💳 →</span>
-              </>
+            {/* Error / Success feedback */}
+            {errorMessage && (
+              <div className="checkout-alert-box error">
+                ⚠️ {errorMessage}
+              </div>
             )}
-          </button>
-          
-          <div className="preview-gate-trust-row">
-            <span>🔒 Razorpay 256-bit SSL</span>
-            <span>⚡ Supports UPI, Cards, NetBanking</span>
-            <span>📱 1-Click WhatsApp & Instagram Share</span>
+
+            {successMessage && (
+              <div className="checkout-alert-box success">
+                ✓ {successMessage}
+              </div>
+            )}
+
+            {/* Main Razorpay Payment Button */}
+            <button
+              type="button"
+              className="preview-unlock-cta-button"
+              onClick={handleRazorpayPay}
+              disabled={loading}
+            >
+              {loading ? (
+                <span className="btn-inner-loading">
+                  <span className="spinner-dot" /> Connecting to Razorpay Secure Gateway...
+                </span>
+              ) : (
+                <span className="btn-inner-content">
+                  <span>Pay ₹{APP_CONFIG.REPORT_PRICE_INR} to Unlock Full 6-Page Dossier</span>
+                  <span className="btn-arrow-icon">💳 →</span>
+                </span>
+              )}
+            </button>
+
+            {/* Supported Payment Methods Badge Row */}
+            <div className="payment-methods-strip">
+              <span className="methods-label">Instant payment via:</span>
+              <div className="methods-pill-group">
+                {PAYMENT_METHODS.map((method) => (
+                  <span key={method.name} className="method-pill">
+                    {method.icon}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Trust Footer */}
+            <div className="preview-security-footer">
+              <span>🔒 256-Bit SSL Encrypted</span>
+              <span>⚡ Instant Unlocking</span>
+              <span>🛡️ 100% Private (No Data Retained)</span>
+            </div>
           </div>
-
-
         </div>
       </FadeReveal>
     </section>

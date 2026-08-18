@@ -97,13 +97,16 @@ export function verifyRazorpaySignature({
     throw err;
   }
 
-  const body = `${razorpay_order_id}|${razorpay_payment_id}`;
-  const expectedSignature = crypto
-    .createHmac('sha256', keySecret)
-    .update(body.toString())
-    .digest('hex');
-
-  const isValid = expectedSignature === razorpay_signature;
+  let isValid = false;
+  try {
+    const expectedBuf = Buffer.from(expectedSignature, 'utf8');
+    const signatureBuf = Buffer.from(razorpay_signature, 'utf8');
+    if (expectedBuf.length === signatureBuf.length) {
+      isValid = crypto.timingSafeEqual(expectedBuf, signatureBuf);
+    }
+  } catch {
+    isValid = false;
+  }
 
   return {
     verified: isValid,

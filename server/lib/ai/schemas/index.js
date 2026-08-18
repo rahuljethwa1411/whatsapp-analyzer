@@ -550,16 +550,16 @@ export const AwardSchema = z.object({
 });
 
 export const StorySchema = z.object({
-  title: z.string(),
+  title: z.string().default('The WhatsApp Chronicles'),
   subtitle: z.string().default(''),
-  opening: z.string(),
-  chapters: z.array(StoryChapterSchema),
+  opening: z.string().default('An investigative look into the chat archive.'),
+  chapters: z.array(StoryChapterSchema).default([]),
   awards: z.array(AwardSchema).default([]),
   verdict: z.object({
-    title: z.string(),
-    description: z.string(),
+    title: z.string().default('Final Verdict'),
+    description: z.string().default(''),
     badge: z.string().default('Documented Archive'),
-  }),
+  }).optional().default({ title: 'Final Verdict', description: '', badge: 'Documented Archive' }),
   ending: z.string().default(''),
 });
 

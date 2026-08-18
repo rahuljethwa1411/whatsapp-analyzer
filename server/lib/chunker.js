@@ -283,15 +283,15 @@ function finalizeChunk(index, acc) {
   return {
     id: `chunk_${index + 1}`,
     startAt: sorted[0]?.timestamp?.toString() || '',
-    endAt:   sorted[sorted.length - 1]?.timestamp?.toString() || '',
+    endAt: sorted[sorted.length - 1]?.timestamp?.toString() || '',
     sessionIds: acc.sessionIds,
     participants,
     messages: sorted.map(m => ({
-      id:        m.id,
+      id: m.id,
       timestamp: m.timestamp?.toString() || '',
-      sender:    m.sender,
-      text:      m.text,
-      type:      m.type,
+      sender: m.sender,
+      text: m.text,
+      type: m.type,
     })),
   };
 }

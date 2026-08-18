@@ -90,6 +90,8 @@ export function ChatAnalysisProvider({ children }: { children: ReactNode }) {
         localStorage.setItem('afterchat_filename', fileName);
         localStorage.removeItem('afterchat_intelligence');
         localStorage.removeItem('afterchat_story');
+        localStorage.removeItem('afterchat_access_mode');
+        sessionStorage.removeItem('afterchat_payment_verified');
       } catch { /* storage full */ }
 
       return { success: true, error: null };
@@ -112,6 +114,8 @@ export function ChatAnalysisProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('afterchat_filename');
       localStorage.removeItem('afterchat_intelligence');
       localStorage.removeItem('afterchat_story');
+      localStorage.removeItem('afterchat_access_mode');
+      sessionStorage.removeItem('afterchat_payment_verified');
     } catch { /* ignore */ }
   };
 

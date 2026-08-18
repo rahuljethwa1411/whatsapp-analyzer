@@ -75,7 +75,7 @@ export async function generateCompleteStory({
       }),
       schema: StorySchema,
       tier: 'synthesis',
-      maxOutputTokens: 3800,
+      maxOutputTokens: 2500,
       temperature: 0.8,
     });
   } catch (err) {
@@ -95,7 +95,7 @@ export async function generateCompleteStory({
         }),
         schema: StorySchema,
         tier: 'synthesis',
-        maxOutputTokens: 3800,
+        maxOutputTokens: 2500,
         temperature: 0.7,
       });
       console.log('[Story] Structured repair succeeded.');
@@ -311,14 +311,14 @@ function narrativeFromAngle(angle, receiptCatalog) {
     .map(r => {
       const who = r.sender || 'Someone';
       const text = r.text ? `"${r.text}"` : `receipt ${r.messageId}`;
-      return `${who} gave the chapter its receipt with ${text}`;
+      return `${who}: ${text}`;
     });
 
   const evidenceLine = receiptLines.length
-    ? receiptLines.join('. ') + '.'
-    : 'The verified archive is light here, so this chapter stays careful instead of making things up.';
+    ? `Key exchanges: ${receiptLines.join(' | ')}.`
+    : 'A subtle transition period captured in the timeline.';
 
-  return `${angle.label}. ${evidenceLine}\n\nThat matters because ${angle.reason || 'this is one of the verified angles the evidence supports'}. The chapter does not need fake drama; the receipt is doing the work.`;
+  return `${angle.label}.\n\n${evidenceLine}\n\n${angle.reason || 'This moment reflects key conversational dynamics and shared history between both participants.'}`;
 }
 
 function attachVerifiedReceipts(story, receiptCatalog, storyAngles) {

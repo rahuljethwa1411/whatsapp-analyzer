@@ -171,7 +171,7 @@ export async function runIntelligencePipeline(request, onProgress = () => {}) {
   // ─── STEP 3: Relationship Investigator (TIER 2 — unified synthesis) ──────
   progress('Investigating relationship dynamics...', 68);
 
-  const formattedEvidence = formatEvidenceForPrompt(evidenceStore, 120);
+  const formattedEvidence = formatEvidenceForPrompt(evidenceStore, 45);
   let rawInvestigatorResult = null;
 
   try {
@@ -183,11 +183,11 @@ export async function runIntelligencePipeline(request, onProgress = () => {}) {
         participantStats,
         compactMemory,
         formattedEvidence,
-        evidenceCount: Math.min(evidenceStore.length, 120),
+        evidenceCount: Math.min(evidenceStore.length, 45),
       }),
       schema: RelationshipInvestigatorSchema,
       tier: 'synthesis',
-      maxOutputTokens: 4500,
+      maxOutputTokens: 2500,
     });
   } catch (err) {
     if (err instanceof DailyLimitError || err instanceof InvalidApiKeyError) throw err;
@@ -204,11 +204,11 @@ export async function runIntelligencePipeline(request, onProgress = () => {}) {
           participantStats,
           compactMemory,
           formattedEvidence,
-          evidenceCount: Math.min(evidenceStore.length, 120),
+          evidenceCount: Math.min(evidenceStore.length, 45),
         }),
         schema: RelationshipInvestigatorSchema,
         tier: 'synthesis',
-        maxOutputTokens: 4500,
+        maxOutputTokens: 2500,
       });
       console.log('[Pipeline] ✓ Structured repair succeeded.');
     } catch (repairErr) {

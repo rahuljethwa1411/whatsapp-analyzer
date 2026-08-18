@@ -28,20 +28,34 @@ export async function createOrder(
     throw new Error('Minimum order amount is 100 paise (₹1).');
   }
 
-  const response = await fetch('/api/create-order', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      amount: amountPaise,
-      currency,
-      notes,
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch('/api/create-order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount: amountPaise,
+        currency,
+        notes,
+      }),
+    });
+  } catch (netErr: any) {
+    throw new Error(
+      'Could not reach the backend server. Make sure "node index.js" is running on port 3001.'
+    );
+  }
 
-  const data = await response.json();
+  let data: any = null;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(
+      `Backend server returned an invalid response (HTTP ${response.status}). Ensure the server is running on port 3001.`
+    );
+  }
 
-  if (!response.ok || !data.success) {
-    throw new Error(data.error || `Failed to create order: HTTP ${response.status}`);
+  if (!response.ok || !data?.success) {
+    throw new Error(data?.error || `Failed to create order: HTTP ${response.status}`);
   }
 
   return data;
@@ -53,16 +67,30 @@ export async function createOrder(
 export async function verifyPayment(
   paymentData: RazorpaySuccessResponse
 ): Promise<RazorpayVerificationResponse> {
-  const response = await fetch('/api/verify-payment', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(paymentData),
-  });
+  let response: Response;
+  try {
+    response = await fetch('/api/verify-payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(paymentData),
+    });
+  } catch (netErr: any) {
+    throw new Error(
+      'Could not reach the backend server to verify payment. Ensure "node index.js" is running on port 3001.'
+    );
+  }
 
-  const data = await response.json();
+  let data: any = null;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(
+      `Payment verification endpoint returned an invalid response (HTTP ${response.status}).`
+    );
+  }
 
-  if (!response.ok || !data.success || !data.verified) {
-    throw new Error(data.error || 'Payment signature verification failed.');
+  if (!response.ok || !data?.success || !data?.verified) {
+    throw new Error(data?.error || 'Payment signature verification failed.');
   }
 
   return data;
@@ -118,8 +146,12 @@ export async function openRazorpayCheckout(options: CheckoutOptions): Promise<vo
       },
       handler: async (response: RazorpaySuccessResponse) => {
         try {
-          // 3. Verify signature on backend
-          const verificationResult = await verifyPayment(response);
+          // 3. Verify signature on backend & trigger email dispatch
+          const userEmail = options.prefill?.email || options.notes?.email;
+          const verificationResult = await verifyPayment({
+            ...response,
+            email: userEmail,
+          } as any);
           options.onSuccess?.(verificationResult);
         } catch (err: any) {
           console.error('[Razorpay] Verification error:', err);

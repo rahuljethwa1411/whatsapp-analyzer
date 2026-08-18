@@ -3,6 +3,7 @@ import { FadeReveal } from '../afterchat/FadeReveal';
 import { Receipt } from './Receipt';
 import { Story } from '../../types/story';
 import { ChatMessage } from '../../types/chat';
+import { APP_CONFIG } from '../../config/appConfig';
 
 interface StorySectionProps {
   story: Story | null;
@@ -99,11 +100,20 @@ export function StorySection({
                     <span className="teaser-lock-icon">🔒</span>
                     <p className="teaser-headline">The story gets considerably more unhinged here.</p>
                     <small>+{story.chapters.length - 2} full chapters (250 words each), all savage receipts & callbacks locked</small>
-                    {onUnlock && (
-                      <button type="button" className="button teaser-unlock-btn" onClick={onUnlock}>
-                        Unlock Full 6-Page Dossier (₹549) <span>→</span>
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="button teaser-unlock-btn"
+                      onClick={() => {
+                        const gate = document.querySelector('.preview-gate-section');
+                        if (gate) {
+                          gate.scrollIntoView({ behavior: 'smooth' });
+                        } else if (onUnlock) {
+                          onUnlock();
+                        }
+                      }}
+                    >
+                      Unlock Full 6-Page Dossier (₹{APP_CONFIG.REPORT_PRICE_INR}) <span>→</span>
+                    </button>
                   </div>
                 </div>
               </div>

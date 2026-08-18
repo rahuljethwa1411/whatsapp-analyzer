@@ -12,6 +12,8 @@ import { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useChatAnalysis } from '../../context/ChatAnalysisContext';
 import { useStory } from '../../context/StoryContext';
+import { APP_CONFIG } from '../../config/appConfig';
+import { openRazorpayCheckout } from '../../lib/razorpay';
 
 const LIVE_TEASERS = [
   'Reading through the 2 AM hostage negotiations and unread rants...',
@@ -94,15 +96,73 @@ export function AnalysisSequence({
     return () => clearInterval(interval);
   }, []);
 
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [email, setEmail] = useState(() => {
+    try {
+      return localStorage.getItem('afterchat_user_email') || '';
+    } catch {
+      return '';
+    }
+  });
+
+  const handleSelectFree = () => {
+    setAccessMode(APP_CONFIG.UNLOCK_ALL ? 'full' : 'preview');
+    window.location.href = '/report';
+  };
+
+  const handleSelectPremium = async () => {
+    if (APP_CONFIG.UNLOCK_ALL) {
+      setAccessMode('full');
+      window.location.href = '/report';
+      return;
+    }
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setPaymentError('Please enter a valid email address so we can email your report & receipt.');
+      return;
+    }
+
+    try {
+      localStorage.setItem('afterchat_user_email', trimmedEmail);
+    } catch { /* ignore */ }
+
+    setPaymentLoading(true);
+    setPaymentError(null);
+
+    await openRazorpayCheckout({
+      amount: APP_CONFIG.REPORT_PRICE_PAISE,
+      currency: 'INR',
+      name: 'Afterchat AI',
+      description: 'Unlock Full 6-Page Intelligence Dossier',
+      prefill: {
+        email: trimmedEmail,
+      },
+      notes: {
+        email: trimmedEmail,
+      },
+      theme: { color: '#cc513d' },
+      onSuccess: () => {
+        setPaymentLoading(false);
+        setAccessMode('full');
+        window.location.href = '/report';
+      },
+      onError: (err: any) => {
+        setPaymentLoading(false);
+        const msg = typeof err === 'string' ? err : err?.message || 'Payment failed. Please try again.';
+        setPaymentError(msg);
+      },
+      onDismiss: () => {
+        setPaymentLoading(false);
+      },
+    });
+  };
+
   const isAIRunning = aiStatus === 'loading';
   const hasError = aiStatus === 'error';
   const isPartial = aiStatus === 'partial';
   const progressPct = progress ?? Math.min(95, Math.round((counter / totalMsgs) * 80));
-
-  const handleSelectPlan = (mode: 'preview' | 'full') => {
-    setAccessMode(mode);
-    window.location.href = '/report';
-  };
 
   return (
     <main className="analysis interactive-analysis-wrapper">
@@ -175,7 +235,7 @@ export function AnalysisSequence({
                 <button
                   type="button"
                   className="button tier-cta-btn tier-free-btn"
-                  onClick={() => handleSelectPlan('preview')}
+                  onClick={handleSelectFree}
                 >
                   View Free Teaser <span>→</span>
                 </button>
@@ -192,8 +252,8 @@ export function AnalysisSequence({
                   <h2 className="tier-title">The Complete Dossier</h2>
                   <div className="tier-price-box">
                     <div className="premium-price-row">
-                      <span className="old-price">₹999</span>
-                      <b className="tier-price-amount premium-amount">₹549</b>
+                      <span className="old-price">₹{APP_CONFIG.ORIGINAL_PRICE_INR}</span>
+                      <b className="tier-price-amount premium-amount">₹{APP_CONFIG.REPORT_PRICE_INR}</b>
                     </div>
                     <small>One-time unlock • Lifetime archive access</small>
                   </div>
@@ -235,12 +295,59 @@ export function AnalysisSequence({
                   </li>
                 </ul>
 
+                {/* Email address field for report delivery */}
+                <div style={{
+                  marginBottom: '14px',
+                  textAlign: 'left',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  padding: '12px',
+                  borderRadius: '6px',
+                  border: '1px solid rgba(255, 255, 255, 0.08)'
+                }}>
+                  <label style={{
+                    display: 'block',
+                    fontSize: '12px',
+                    color: '#d4cbb8',
+                    marginBottom: '5px',
+                    fontWeight: 600
+                  }}>
+                    📧 Delivery Email (for full report & receipt):
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      setPaymentError(null);
+                    }}
+                    placeholder="you@gmail.com"
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: '5px',
+                      background: 'rgba(0, 0, 0, 0.3)',
+                      border: '1px solid rgba(255, 255, 255, 0.2)',
+                      color: '#fff',
+                      fontSize: '13px',
+                      outline: 'none',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+
+                {paymentError && (
+                  <div style={{ color: '#ef4444', fontSize: '13px', marginBottom: '12px', textAlign: 'center' }}>
+                    ⚠️ {paymentError}
+                  </div>
+                )}
+
                 <button
                   type="button"
                   className="button tier-cta-btn tier-premium-btn"
-                  onClick={() => handleSelectPlan('full')}
+                  onClick={handleSelectPremium}
+                  disabled={paymentLoading}
                 >
-                  Unlock Full 6-Page Dossier (₹549) <span>→</span>
+                  {paymentLoading ? 'Opening Checkout...' : `Unlock Full 6-Page Dossier (₹${APP_CONFIG.REPORT_PRICE_INR})`} <span>→</span>
                 </button>
 
                 <div className="tier-guarantee-row">
