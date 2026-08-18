@@ -1,10 +1,15 @@
-/**
- * Automated Email Dispatcher for Afterchat Intelligence Reports
- * Uses Nodemailer with Gmail SMTP.
- */
-
 import nodemailer from 'nodemailer';
+import dns from 'dns';
 import { generateUnlockToken } from './razorpay.js';
+
+// Prevent ENETUNREACH by prioritizing IPv4 over unroutable IPv6
+try {
+  if (dns && typeof dns.setDefaultResultOrder === 'function') {
+    dns.setDefaultResultOrder('ipv4first');
+  }
+} catch {
+  // Ignore if not supported in older Node
+}
 
 /**
  * Creates and configures the Nodemailer SMTP transporter.
@@ -18,10 +23,16 @@ function createTransporter() {
   }
 
   return nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    family: 4, // Force IPv4 to eliminate ENETUNREACH on networks without IPv6 routes
     auth: {
       user: user.trim(),
       pass: pass.trim(),
+    },
+    tls: {
+      rejectUnauthorized: false,
     },
   });
 }
@@ -125,6 +136,7 @@ function generateEmailHtml({
  */
 export async function sendReportEmail({
   to,
+  email,
   participants,
   totalMessages,
   storyTitle,
@@ -133,8 +145,9 @@ export async function sendReportEmail({
   paymentId,
   attachments = [],
 }) {
-  if (!to || !to.includes('@')) {
-    console.warn('[Mailer] Skipping email dispatch: Invalid recipient email:', to);
+  const recipient = (to || email || '').trim();
+  if (!recipient || !recipient.includes('@')) {
+    console.warn('[Mailer] Skipping email dispatch: Invalid recipient email:', recipient);
     return { success: false, error: 'Invalid recipient email' };
   }
 

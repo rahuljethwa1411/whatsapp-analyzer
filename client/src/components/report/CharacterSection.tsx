@@ -9,6 +9,8 @@ import { CharacterInsight } from '../../types/intelligence';
 import { ParticipantStats } from '../../types/analysis';
 import { ChatMessage } from '../../types/chat';
 
+import { cleanNarrative } from '../../lib/narrativeFormatter';
+
 interface CharacterSectionProps {
   characters: CharacterInsight[];
   participantStats: ParticipantStats[];
@@ -41,9 +43,9 @@ export function CharacterSection({
           return (
             <FadeReveal key={char.participant}>
               <div className="character-profile-card">
-                <span className="character-archetype-tag">{char.title}</span>
-                <h3 className="character-name">{char.participant}</h3>
-                <p className="character-description">{char.description}</p>
+                <span className="character-archetype-tag">{cleanNarrative(char.title)}</span>
+                <h3 className="character-name">{cleanNarrative(char.participant)}</h3>
+                <p className="character-description">{cleanNarrative(char.description)}</p>
 
                 {stats && (
                   <div className="character-stats-row">

@@ -205,7 +205,7 @@ export function getOpenAIClient() {
     }
     clientInstance = new OpenAI({
       apiKey,
-      timeout: 120000, // 2 minutes
+      timeout: 240000, // 4 minutes
     });
   }
   return clientInstance;

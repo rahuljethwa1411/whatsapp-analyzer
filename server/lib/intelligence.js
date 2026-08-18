@@ -56,6 +56,7 @@ import {
   validateChunkExtractionEvidence,
   normalizeExtractionResult,
 } from './evidence.js';
+import { buildVerifiedConversationMemory } from './evidenceIntelligence.js';
 import {
   splitMessagesByTokenWeight,
 } from './chunker.js';
@@ -121,20 +122,8 @@ export async function runIntelligencePipeline(request, onProgress = () => {}) {
     extractionModel,
   };
 
-  // Validates messageIds, deduplicates locally, and sorts by importance
-  const evidenceStore = buildEvidenceStore(extractions, messageIndex);
-
-  if (process.env.NODE_ENV !== 'production') {
-    console.log('[Evidence] Sample extracted evidence items:');
-    evidenceStore.slice(0, 3).forEach((item, i) => {
-      console.log(
-        `  #${i + 1} messageId=${item.messageId} sender=${item.sender} importance=${item.importance}\n` +
-        `     type=${item.type}\n` +
-        `     text="${String(item.text).slice(0, 100)}"` +
-        (item.potentialConnections?.length ? `\n     connections=${item.potentialConnections.join(' | ')}` : '')
-      );
-    });
-  }
+  // Validates messageIds, reconstructs dynamic context windows, and deduplicates interactions
+  const evidenceStore = buildEvidenceStore(extractions, messageIndex, allMessages);
 
   const participantStats = buildParticipantStats(metadata.participants, allMessages, metadata);
 
@@ -210,29 +199,18 @@ export async function runIntelligencePipeline(request, onProgress = () => {}) {
     }
   }
 
-  // ─── STEP 4: Validate Evidence References & Cross-Check ──────────────────
+  // ─── STEP 4: Validate Evidence References & Build Verified Memory ────────
   progress('Connecting the receipts...', 92);
 
   const { validatedResult: investigatorResult, validCount, strippedCount } =
     validateInvestigatorRefs(rawInvestigatorResult, messageIndex);
 
-  console.log(
-    '\n[Investigator] ═══════════════════════════════════\n' +
-    '[Investigator] RELATIONSHIP INVESTIGATOR METRICS\n' +
-    `[Investigator]   Eras:                ${investigatorResult.eras?.length || 0}\n` +
-    `[Investigator]   Profiles:            ${investigatorResult.participantProfiles?.length || 0}\n` +
-    `[Investigator]   Patterns:            ${investigatorResult.patterns?.length || 0}\n` +
-    `[Investigator]   Contradictions:      ${investigatorResult.contradictions?.length || 0}\n` +
-    `[Investigator]   Callbacks:           ${investigatorResult.callbacks?.length || 0}\n` +
-    `[Investigator]   Foreshadowing:       ${investigatorResult.foreshadowing?.length || 0}\n` +
-    `[Investigator]   Lore items:          ${investigatorResult.lore?.length || 0}\n` +
-    `[Investigator]   Funny moments:       ${investigatorResult.funnyMoments?.length || 0}\n` +
-    `[Investigator]   Turning points:      ${investigatorResult.turningPoints?.length || 0}\n` +
-    `[Investigator]   Plot twists:         ${investigatorResult.plotTwists?.length || 0}\n` +
-    `[Investigator]   Receipt candidates:  ${investigatorResult.receiptCandidates?.length || 0}\n` +
-    `[Investigator]   Evidence refs:       ${validCount} valid, ${strippedCount} stripped\n` +
-    '[Investigator] ═══════════════════════════════════\n'
-  );
+  const conversationMemory = buildVerifiedConversationMemory({
+    evidenceStore,
+    rawInvestigatorResult: investigatorResult,
+    metadata,
+    summaryStats,
+  });
 
   // ─── STEP 5: Map to AfterchatIntelligence ────────────────────────────────
   progress('Finalizing intelligence archive...', 96);
@@ -240,7 +218,8 @@ export async function runIntelligencePipeline(request, onProgress = () => {}) {
   const mappedIntelligence = mapInvestigatorToLegacyIntelligence(
     investigatorResult,
     extractionMeta,
-    evidenceStore
+    evidenceStore,
+    conversationMemory
   );
 
   const validatedIntelligence = validateIntelligenceEvidence(mappedIntelligence, messageIndex);
@@ -548,7 +527,7 @@ function safeArray(val) {
   return [];
 }
 
-function mapInvestigatorToLegacyIntelligence(investigatorResult, extractionMeta, evidenceStore) {
+function mapInvestigatorToLegacyIntelligence(investigatorResult, extractionMeta, evidenceStore, conversationMemory = null) {
   const inv = investigatorResult || {};
   const eras = safeArray(inv.eras);
   const participantProfiles = safeArray(inv.participantProfiles);
@@ -570,37 +549,68 @@ function mapInvestigatorToLegacyIntelligence(investigatorResult, extractionMeta,
 
   const recurringJokes = lore.map((l) => `${l.name || ''}: ${l.origin || ''}`).filter(Boolean).slice(0, 8);
 
+  function stripMsgIds(text) {
+    if (!text || typeof text !== 'string') return '';
+    return text
+      .replace(/\[\s*msg_\d+\s*\]/gi, '')
+      .replace(/\(\s*msg_\d+\s*\)/gi, '')
+      .replace(/\bmsg_\d+\b/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+
   const mappedEras = eras.map((e, idx) => ({
     id: e.id || `era_${idx + 1}`,
-    title: e.title || `Phase ${idx + 1}`,
+    title: stripMsgIds(e.title) || `Phase ${idx + 1}`,
     startAt: e.startDate || '',
     endAt: e.endDate || '',
-    summary: e.summary || '',
-    dominantTopics: safeArray(e.dominantTopics),
+    summary: stripMsgIds(e.summary) || '',
+    dominantTopics: safeArray(e.dominantTopics).map(stripMsgIds),
     tone: e.tone || 'Dynamic',
     importance: 0.85,
     evidenceMessageIds: safeArray(e.evidence).map((ev) => (typeof ev === 'string' ? ev : ev?.messageId)).filter(Boolean),
   }));
 
-  const mappedCharacters = participantProfiles.map((p) => ({
-    participant: p.participant || 'Participant',
-    title: p.communicationStyle || 'Active Communicator',
-    description: safeArray(p.observedBehavior).map((b) => b?.observation).filter(Boolean).join('. ') || 'Observational profile',
-    observableTraits: [
-      p.communicationStyle,
-      p.humorStyle,
-      p.emotionalStyle,
-      p.conflictRole,
-      ...safeArray(p.recurringHabits),
-    ].filter(Boolean).slice(0, 6),
-    confidence: 0.9,
-    evidenceMessageIds: safeArray(p.observedBehavior).flatMap((b) => safeArray(b?.evidence).map((ev) => (typeof ev === 'string' ? ev : ev?.messageId))).filter(Boolean),
-  }));
+  const mappedCharacters = participantProfiles.map((p) => {
+    const behaviorItems = safeArray(p.observedBehavior)
+      .map((b) => (typeof b === 'string' ? b : b?.observation || b?.claim || ''))
+      .filter(Boolean);
+    const selfImageItems = safeArray(p.selfImage)
+      .map((s) => (typeof s === 'string' ? s : s?.claim || ''))
+      .filter(Boolean);
+    const habits = safeArray(p.recurringHabits).map(stripMsgIds).filter(Boolean);
+
+    let desc = behaviorItems.map(stripMsgIds).join('. ');
+    if (!desc && selfImageItems.length > 0) {
+      desc = `Claims: "${selfImageItems.map(stripMsgIds).join('; ')}". Signature communication style: ${p.communicationStyle || 'Frequent chatter'}.`;
+    }
+    if (!desc && habits.length > 0) {
+      desc = `Signature texting habits: ${habits.join(', ')}. Known for distinctive rhythm throughout the archive.`;
+    }
+    if (!desc) {
+      desc = `${p.communicationStyle || 'Active Communicator'}. Known for rapid-fire banter, distinctive texting rhythm, and memorable timing across the archive.`;
+    }
+
+    return {
+      participant: stripMsgIds(p.participant) || 'Participant',
+      title: stripMsgIds(p.communicationStyle) || 'Active Communicator',
+      description: desc,
+      observableTraits: [
+        p.communicationStyle,
+        p.humorStyle,
+        p.emotionalStyle,
+        p.conflictRole,
+        ...habits,
+      ].filter(Boolean).map(stripMsgIds).slice(0, 6),
+      confidence: 0.9,
+      evidenceMessageIds: safeArray(p.observedBehavior).flatMap((b) => safeArray(b?.evidence).map((ev) => (typeof ev === 'string' ? ev : ev?.messageId))).filter(Boolean),
+    };
+  });
 
   const mappedPatterns = patterns.map((pat, idx) => ({
     id: pat.id || `pat_${idx + 1}`,
-    title: pat.pattern || `Pattern ${idx + 1}`,
-    description: pat.explanation || '',
+    title: stripMsgIds(pat.pattern) || `Pattern ${idx + 1}`,
+    description: stripMsgIds(pat.explanation) || '',
     frequency: 1,
     importance: pat.confidence || 0.85,
     evidenceMessageIds: safeArray(pat.evidence).map((ev) => (typeof ev === 'string' ? ev : ev?.messageId)).filter(Boolean),
@@ -608,8 +618,8 @@ function mapInvestigatorToLegacyIntelligence(investigatorResult, extractionMeta,
 
   const mappedLore = lore.map((l, idx) => ({
     id: l.id || `lore_${idx + 1}`,
-    title: l.name || `Lore ${idx + 1}`,
-    description: [l.origin, l.howItEvolved].filter(Boolean).join(' — ') || 'Shared inside joke',
+    title: stripMsgIds(l.name) || `Lore ${idx + 1}`,
+    description: stripMsgIds([l.origin, l.howItEvolved].filter(Boolean).join(' — ')) || 'Shared inside joke',
     date: '',
     participants: [],
     funnyScore: 0.88,
@@ -617,22 +627,48 @@ function mapInvestigatorToLegacyIntelligence(investigatorResult, extractionMeta,
     evidenceMessageIds: safeArray(l.evidence).map((ev) => (typeof ev === 'string' ? ev : ev?.messageId)).filter(Boolean),
   }));
 
-  const mappedPlotTwists = plotTwists.map((pt, idx) => ({
+  let mappedPlotTwists = plotTwists.map((pt, idx) => ({
     id: pt.id || `twist_${idx + 1}`,
-    title: pt.title || `Turning Point ${idx + 1}`,
-    description: pt.description || '',
+    title: stripMsgIds(pt.title) || `Turning Point ${idx + 1}`,
+    description: stripMsgIds(pt.description) || '',
     beforePeriod: pt.beforeContext || '',
     afterPeriod: pt.afterContext || '',
     significance: pt.significance || 0.85,
     evidenceMessageIds: safeArray(pt.evidence).map((ev) => (typeof ev === 'string' ? ev : ev?.messageId)).filter(Boolean),
   }));
 
+  if (mappedPlotTwists.length === 0 && safeArray(inv.turningPoints).length > 0) {
+    mappedPlotTwists = safeArray(inv.turningPoints).map((tp, idx) => ({
+      id: `twist_${idx + 1}`,
+      title: stripMsgIds(tp.title) || `Plot Twist ${idx + 1}`,
+      description: stripMsgIds(tp.description) || 'A major shift in tone, topics, and messaging velocity.',
+      beforePeriod: 'Early Phase',
+      afterPeriod: 'Late Phase',
+      significance: tp.significance || 0.88,
+      evidenceMessageIds: safeArray(tp.evidence).map((ev) => (typeof ev === 'string' ? ev : ev?.messageId)).filter(Boolean),
+    }));
+  }
+
+  if (mappedPlotTwists.length === 0 && mappedEras.length >= 2) {
+    mappedPlotTwists = [
+      {
+        id: 'twist_1',
+        title: 'The Great Dynamic Shift',
+        description: `Transition from ${mappedEras[0].title} into ${mappedEras[1].title}, marking a fundamental shift in texting habits and conversational priorities.`,
+        beforePeriod: mappedEras[0].startAt || 'Opening Phase',
+        afterPeriod: mappedEras[1].startAt || 'Evolved Phase',
+        significance: 0.9,
+        evidenceMessageIds: mappedEras[0].evidenceMessageIds.slice(0, 2),
+      },
+    ];
+  }
+
   return {
     overview: {
-      dominantThemes,
-      overallTone,
-      potentialStoryArcs,
-      recurringJokes,
+      dominantThemes: dominantThemes.map(stripMsgIds),
+      overallTone: stripMsgIds(overallTone),
+      potentialStoryArcs: potentialStoryArcs.map(stripMsgIds),
+      recurringJokes: recurringJokes.map(stripMsgIds),
     },
     eras: mappedEras,
     characters: mappedCharacters,
@@ -641,6 +677,7 @@ function mapInvestigatorToLegacyIntelligence(investigatorResult, extractionMeta,
     plotTwists: mappedPlotTwists,
     _evidenceStore: evidenceStore,
     _rawInvestigator: investigatorResult,
+    _conversationMemory: conversationMemory,
     _meta: extractionMeta,
   };
 }

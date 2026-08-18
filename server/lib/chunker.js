@@ -22,6 +22,17 @@ import { buildExtractionRequest } from './ai/extractionRequest.js';
 const SESSION_GAP_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 /**
+ * Number of messages to overlap between adjacent chunks at their boundary.
+ * This preserves interactions that straddle chunk edges.
+ * Configurable via CHUNK_BOUNDARY_OVERLAP_MESSAGES env var (default: 15).
+ * Context reconstruction in evidence.js deduplicates, so no duplicate evidence.
+ */
+export const CHUNK_BOUNDARY_OVERLAP_MESSAGES = parseInt(
+  process.env.CHUNK_BOUNDARY_OVERLAP_MESSAGES || '15',
+  10
+);
+
+/**
  * Splits an array of messages into two balanced parts based on estimated token weight
  * at message boundaries, preserving chronological order. Never splits a message.
  *
@@ -192,7 +203,44 @@ export function createChunks(_sessions, allMessages, config = {}) {
     return finalizeChunk(idx, { messages: acc.messages, sessionIds: acc.sessionIds });
   });
 
-  return chunks;
+  // Apply boundary overlap: each chunk gets the last N messages of the previous chunk
+  // prepended as context. This ensures interactions at chunk edges are never truncated.
+  const overlappedChunks = chunks.map((chunk, idx) => {
+    if (idx === 0) return chunk; // First chunk: no previous chunk to borrow from
+
+    const prevChunk = chunks[idx - 1];
+    const overlapMsgs = prevChunk.messages.slice(-CHUNK_BOUNDARY_OVERLAP_MESSAGES);
+    // Only prepend messages that wouldn't cause a session gap stitching
+    const firstChunkTs = new Date(chunk.messages[0]?.timestamp || 0).getTime();
+    const lastOverlapTs = new Date(overlapMsgs[overlapMsgs.length - 1]?.timestamp || 0).getTime();
+    const gapMs = firstChunkTs - lastOverlapTs;
+
+    if (gapMs > SESSION_GAP_MS) {
+      // The overlap crosses a natural multi-hour silence — no overlap needed
+      return chunk;
+    }
+
+    const combined = [...overlapMsgs, ...chunk.messages];
+    const deduped = combined.filter((m, i, arr) => arr.findIndex((x) => x.id === m.id) === i);
+    const sorted = deduped.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    return {
+      ...chunk,
+      messages: sorted.map((m) => ({
+        id: m.id,
+        timestamp: m.timestamp?.toString() || '',
+        sender: m.sender,
+        text: m.text,
+        type: m.type,
+      })),
+      startAt: sorted[0]?.timestamp?.toString() || chunk.startAt,
+      // endAt stays the same — we only prepend, never extend
+      _hasOverlap: true,
+      _overlapCount: overlapMsgs.length,
+    };
+  });
+
+  return overlappedChunks;
 }
 
 /**

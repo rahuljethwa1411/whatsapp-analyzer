@@ -537,6 +537,9 @@ export const StoryChapterSchema = z.object({
     label: z.string(),
     value: z.string(),
   })).default([]),
+  // New primary field — evidenceIds (evidence interaction IDs)
+  evidenceIds: z.array(z.string()).default([]),
+  // Legacy alias accepted from older model outputs
   evidenceMessageIds: z.array(z.string()).default([]),
 });
 
@@ -546,6 +549,7 @@ export const AwardSchema = z.object({
   recipient: z.string(),
   reason: z.string(),
   emoji: z.string().default('🏆'),
+  evidenceIds: z.array(z.string()).default([]),
   evidenceMessageIds: z.array(z.string()).default([]),
 });
 
@@ -590,12 +594,18 @@ export const STORY_JSON_SCHEMA = {
               additionalProperties: false,
             },
           },
+          // Primary field: evidence interaction IDs (ev_int_X)
+          evidenceIds: {
+            type: 'array',
+            items: { type: 'string' },
+          },
+          // Legacy alias: raw message IDs (msg_X) — accepted for backward compat
           evidenceMessageIds: {
             type: 'array',
             items: { type: 'string' },
           },
         },
-        required: ['id', 'title', 'period', 'narrative', 'keyStats', 'evidenceMessageIds'],
+        required: ['id', 'title', 'period', 'narrative', 'keyStats', 'evidenceIds', 'evidenceMessageIds'],
         additionalProperties: false,
       },
     },
@@ -609,12 +619,16 @@ export const STORY_JSON_SCHEMA = {
           recipient: { type: 'string' },
           reason: { type: 'string' },
           emoji: { type: 'string' },
+          evidenceIds: {
+            type: 'array',
+            items: { type: 'string' },
+          },
           evidenceMessageIds: {
             type: 'array',
             items: { type: 'string' },
           },
         },
-        required: ['id', 'title', 'recipient', 'reason', 'emoji', 'evidenceMessageIds'],
+        required: ['id', 'title', 'recipient', 'reason', 'emoji', 'evidenceIds', 'evidenceMessageIds'],
         additionalProperties: false,
       },
     },

@@ -4055,3 +4055,122 @@ main.report,
   background: #24221f;
   border-color: #f59e0b;
 }
+
+/* ─── Ultra-Human Narrative & Chat Bubble Quotes ───────────────────────── */
+.story-opening-box {
+  background: var(--cream);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  padding: 28px 32px;
+  margin: 28px 0 40px;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+}
+
+.story-opening-paragraph {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 1.08rem;
+  line-height: 1.75;
+  color: var(--ink);
+  margin-bottom: 20px;
+}
+.story-opening-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.story-opening-paragraph.structural-metaphor-card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 20px 24px;
+  margin: 20px 0;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.02);
+  border-left: 3px solid #f59e0b;
+}
+
+.story-opening-paragraph.roles-contrast-card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 20px 24px;
+  margin: 20px 0;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.02);
+  border-left: 3px solid #6366f1;
+}
+
+.chapter-paragraph {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 1.02rem;
+  line-height: 1.75;
+  color: var(--ink);
+  margin-bottom: 16px;
+}
+.chapter-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+/* WhatsApp speech bubble quote pill */
+.story-message-highlight.inline-chat-quote {
+  display: inline;
+  background: rgba(37, 211, 102, 0.12);
+  color: #128c7e;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.96em;
+  font-weight: 600;
+  margin: 0 2px;
+  vertical-align: baseline;
+  border: 1px solid rgba(37, 211, 102, 0.3);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+[data-theme="dark"] .story-message-highlight.inline-chat-quote {
+  background: rgba(37, 211, 102, 0.16);
+  color: #25d366;
+  border-color: rgba(37, 211, 102, 0.35);
+}
+
+.msg-quote-symbol {
+  opacity: 0.4;
+  font-size: 0.9em;
+  margin: 0 1px;
+}
+
+.msg-quote-body {
+  font-style: normal;
+}
+
+.story-message-highlight.verified-receipt-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #e8f0fe;
+  color: #1a73e8;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.85em;
+  margin: 0 4px;
+  border: 1px solid #d2e3fc;
+}
+
+[data-theme="dark"] .story-message-highlight.verified-receipt-pill {
+  background: #1e293b;
+  color: #60a5fa;
+  border-color: #334155;
+}
+
+@page {
+  margin: 10mm;
+  size: A4 portrait;
+}
+
+@media print {
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+

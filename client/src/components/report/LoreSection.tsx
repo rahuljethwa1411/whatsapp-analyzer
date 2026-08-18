@@ -8,6 +8,8 @@ import { Receipt } from './Receipt';
 import { LoreItem } from '../../types/intelligence';
 import { ChatMessage } from '../../types/chat';
 
+import { cleanNarrative } from '../../lib/narrativeFormatter';
+
 interface LoreSectionProps {
   lore: LoreItem[];
   getMessagesByIds: (ids: string[]) => ChatMessage[];
@@ -36,8 +38,8 @@ export function LoreSection({ lore, getMessagesByIds, isUnlocked }: LoreSectionP
                 <span className="lore-funny-badge">FUNNY SCORE: {Math.round(item.funnyScore * 10)}/10</span>
               </div>
 
-              <h3 className="lore-card-title">{item.title}</h3>
-              <p className="lore-card-description">{item.description}</p>
+              <h3 className="lore-card-title">{cleanNarrative(item.title)}</h3>
+              <p className="lore-card-description">{cleanNarrative(item.description)}</p>
 
               <div className="lore-card-footer">
                 <small>Participants: {item.participants.join(', ') || 'Everyone'}</small>

@@ -71,9 +71,31 @@ export function StorySection({
         <p className="lede">{story.subtitle}</p>
 
         <div className="story-opening-box">
-          <p className="story-opening-text">
-            {renderHighlightedNarrative(story.opening, getMessagesByIds)}
-          </p>
+          {story.opening.split(/\n\n+/).map((para, pIdx) => {
+            const trimmed = para.trim();
+            if (!trimmed) return null;
+
+            // Detect signature AfterChat card sections
+            const lower = trimmed.toLowerCase();
+            const isOperatingMetaphor = lower.includes('core operating metaphor') ||
+              lower.includes('relationship architecture') ||
+              lower.includes('structurally resembles') ||
+              lower.includes('home turf') ||
+              lower.includes('mutual adversaries');
+            const isPersonaVsRecord = lower.includes('projected persona') ||
+              lower.includes('incriminating record') ||
+              lower.includes('self-mythology') ||
+              lower.includes('roles you think you play');
+
+            return (
+              <div
+                key={pIdx}
+                className={`story-opening-paragraph ${isOperatingMetaphor ? 'structural-metaphor-card' : ''} ${isPersonaVsRecord ? 'roles-contrast-card' : ''}`}
+              >
+                {renderHighlightedNarrative(trimmed, getMessagesByIds)}
+              </div>
+            );
+          })}
         </div>
       </FadeReveal>
 
@@ -87,16 +109,22 @@ export function StorySection({
               </div>
               <h3 className="chapter-title">{chapter.title}</h3>
               <div className="chapter-narrative">
-                {renderHighlightedNarrative(chapter.narrative, getMessagesByIds)}
+                {chapter.narrative.split(/\n\n+/).map((para, pIdx) => (
+                  <p key={pIdx} className="chapter-paragraph">
+                    {renderHighlightedNarrative(para.trim(), getMessagesByIds)}
+                  </p>
+                ))}
               </div>
 
-              {chapter.keyStats.length > 0 && (
+              {chapter.keyStats.filter(st => st?.label && st?.value && !String(st.value).includes('ev_int') && !String(st.label).toLowerCase().includes('evidence')).length > 0 && (
                 <div className="chapter-stats-row">
-                  {chapter.keyStats.map((st) => (
-                    <span key={st.label} className="chapter-stat-pill">
-                      <b>{st.value}</b> {st.label}
-                    </span>
-                  ))}
+                  {chapter.keyStats
+                    .filter(st => st?.label && st?.value && !String(st.value).includes('ev_int') && !String(st.label).toLowerCase().includes('evidence'))
+                    .map((st) => (
+                      <span key={st.label} className="chapter-stat-pill">
+                        <b>{st.value}</b> {st.label}
+                      </span>
+                    ))}
                 </div>
               )}
 
@@ -179,8 +207,9 @@ function renderHighlightedNarrative(
     });
   }
 
-  // 2. Tokenize by encoded receipts and quotes ('...' or "...")
-  const tokens = processed.split(/(«MSG::[^»]+»|'[^'\n]{2,160}'|"[^"\n]{2,160}")/g);
+  // 2. Tokenize by encoded receipts and real double-quoted dialogue ("..." or “...”)
+  // NEVER split on single quotes (') because that breaks English contractions (it's, don't, Rahul's).
+  const tokens = processed.split(/(«MSG::[^»]+»|"[^"\n]{2,160}"|“[^”\n]{2,160}”)/g);
 
   return (
     <>
@@ -201,10 +230,10 @@ function renderHighlightedNarrative(
           );
         }
 
-        // Quoted message text inside single or double quotes
+        // Quoted message text inside double quotes ("..." or “...”)
         if (
-          (token.startsWith("'") && token.endsWith("'") && token.length > 3) ||
-          (token.startsWith('"') && token.endsWith('"') && token.length > 3)
+          (token.startsWith('"') && token.endsWith('"') && token.length > 2) ||
+          (token.startsWith('“') && token.endsWith('”') && token.length > 2)
         ) {
           const innerQuote = token.slice(1, -1);
           return (

@@ -8,6 +8,8 @@ import { Receipt } from './Receipt';
 import { PlotTwist } from '../../types/intelligence';
 import { ChatMessage } from '../../types/chat';
 
+import { cleanNarrative } from '../../lib/narrativeFormatter';
+
 interface PlotTwistSectionProps {
   twists: PlotTwist[];
   getMessagesByIds: (ids: string[]) => ChatMessage[];
@@ -44,12 +46,12 @@ export function PlotTwistSection({ twists, getMessagesByIds, isUnlocked }: PlotT
               <div className="twist-meta">
                 <span className="twist-badge">PLOT TWIST #{String(idx + 1).padStart(2, '0')}</span>
                 <span className="twist-period">
-                  {twist.beforePeriod} → {twist.afterPeriod}
+                  {cleanNarrative(twist.beforePeriod)} → {cleanNarrative(twist.afterPeriod)}
                 </span>
               </div>
 
-              <h3 className="twist-title">{twist.title}</h3>
-              <p className="twist-description">{twist.description}</p>
+              <h3 className="twist-title">{cleanNarrative(twist.title)}</h3>
+              <p className="twist-description">{cleanNarrative(twist.description)}</p>
 
               <div className="twist-significance-bar">
                 <span>DRAMA IMPACT RATING</span>

@@ -9,6 +9,8 @@ import { StoryEra } from '../../types/intelligence';
 import { ChatMessage } from '../../types/chat';
 import { APP_CONFIG } from '../../config/appConfig';
 
+import { cleanNarrative } from '../../lib/narrativeFormatter';
+
 interface EraSectionProps {
   eras: StoryEra[];
   getMessagesByIds: (ids: string[]) => ChatMessage[];
@@ -39,12 +41,12 @@ export function EraSection({ eras, getMessagesByIds, isUnlocked, onUnlock }: Era
                   {formatDate(era.startAt)} → {formatDate(era.endAt)}
                 </span>
               </div>
-              <h3 className="era-title">{era.title}</h3>
-              <p className="era-summary">{era.summary}</p>
+              <h3 className="era-title">{cleanNarrative(era.title)}</h3>
+              <p className="era-summary">{cleanNarrative(era.summary)}</p>
 
               {era.dominantTopics.length > 0 && (
                 <div className="era-topics">
-                  <b>DOMINANT TOPICS:</b> {era.dominantTopics.join(', ')}
+                  <b>DOMINANT TOPICS:</b> {era.dominantTopics.map(cleanNarrative).join(', ')}
                 </div>
               )}
 

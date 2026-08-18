@@ -172,9 +172,9 @@ export function StoryProvider({ children }: { children: ReactNode }) {
           topWords: analysis.words.topWords?.slice(0, 10).map((w) => w.word) ?? [],
         };
 
-        // 120 second timeout for deep reasoning story generation (gpt-5-mini)
+        // 240 second timeout for deep reasoning story generation (gpt-5-mini)
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 120000);
+        const timeoutId = setTimeout(() => controller.abort(), 240000);
 
         const res = await fetch('/api/story', {
           method: 'POST',
